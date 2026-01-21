@@ -3,15 +3,17 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowUpRight, ArrowDownRight, Wallet, Users } from 'lucide-react'
+import { ArrowDownRight, Wallet, Users } from 'lucide-react'
 
 export default function Dashboard() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   
-  // Estado para guardar datos separados para no recargar al cambiar de tab
-  const [personalData, setPersonalData] = useState({ accounts: [], transactions: [] })
-  const [sharedData, setSharedData] = useState({ accounts: [], transactions: [] })
+  // --- CORRECCIÓN AQUÍ ---
+  // Agregamos "as any[]" para decirle a TypeScript que estas listas recibirán datos después
+  const [personalData, setPersonalData] = useState({ accounts: [] as any[], transactions: [] as any[] })
+  const [sharedData, setSharedData] = useState({ accounts: [] as any[], transactions: [] as any[] })
+  // -----------------------
 
   const fetchData = async () => {
     setLoading(true)
@@ -26,6 +28,7 @@ export default function Dashboard() {
     const { data: sAcc } = await supabase.from('accounts').select('*').eq('scope', 'SHARED')
     const { data: sTx } = await supabase.from('transactions').select('*, created_by_profile:profiles(email)').eq('scope', 'SHARED').order('date', { ascending: false }).limit(5)
 
+    // Ahora TypeScript ya no se quejará aquí
     setPersonalData({ accounts: pAcc || [], transactions: pTx || [] })
     setSharedData({ accounts: sAcc || [], transactions: sTx || [] })
     setLoading(false)
@@ -43,8 +46,8 @@ export default function Dashboard() {
             <div className="text-2xl">{acc.icon}</div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">$ 0.00</div> {/* Aquí irá el saldo real en V2 */}
-            <p className="text-xs text-muted-foreground">Disponible</p>
+            <div className="text-2xl font-bold">Ver saldo</div>
+            <p className="text-xs text-muted-foreground">Cuenta activa</p>
           </CardContent>
         </Card>
       ))}
@@ -67,7 +70,6 @@ export default function Dashboard() {
                 <p className="text-xs text-muted-foreground">{tx.date} • {tx.created_by_profile?.email.split('@')[0]}</p>
               </div>
               <div className="flex items-center font-medium">
-                {/* Lógica simple visual: si no tengo el monto, muestro icono */}
                 <ArrowDownRight className="mr-1 h-4 w-4 text-red-500" />
                 <span className="text-sm">Ver detalle</span>
               </div>
