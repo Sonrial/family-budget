@@ -5,30 +5,56 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ArrowDownRight, Wallet, Users } from 'lucide-react'
 
+// Utilidad para formatear dinero colombiano (COP)
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount)
+}
+
 export default function Dashboard() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   
-  // --- CORRECCIÓN AQUÍ ---
-  // Agregamos "as any[]" para decirle a TypeScript que estas listas recibirán datos después
+  // Usamos 'as any[]' para evitar errores de TypeScript
   const [personalData, setPersonalData] = useState({ accounts: [] as any[], transactions: [] as any[] })
   const [sharedData, setSharedData] = useState({ accounts: [] as any[], transactions: [] as any[] })
-  // -----------------------
 
   const fetchData = async () => {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    // 1. Cargar Datos Personales
-    const { data: pAcc } = await supabase.from('accounts').select('*').eq('scope', 'PERSONAL').eq('user_id', user.id)
-    const { data: pTx } = await supabase.from('transactions').select('*, created_by_profile:profiles(email)').eq('scope', 'PERSONAL').order('date', { ascending: false }).limit(5)
-    
-    // 2. Cargar Datos Familiares
-    const { data: sAcc } = await supabase.from('accounts').select('*').eq('scope', 'SHARED')
-    const { data: sTx } = await supabase.from('transactions').select('*, created_by_profile:profiles(email)').eq('scope', 'SHARED').order('date', { ascending: false }).limit(5)
+    // 1. Cargar SALDOS PERSONALES (Desde la nueva vista account_balances)
+    const { data: pAcc } = await supabase
+      .from('account_balances') // <--- CAMBIO IMPORTANTE: Leemos la vista, no la tabla
+      .select('*')
+      .eq('scope', 'PERSONAL')
+      .eq('user_id', user.id)
 
-    // Ahora TypeScript ya no se quejará aquí
+    const { data: pTx } = await supabase
+      .from('transactions')
+      .select('*, created_by_profile:profiles(email)')
+      .eq('scope', 'PERSONAL')
+      .order('date', { ascending: false })
+      .limit(5)
+    
+    // 2. Cargar SALDOS FAMILIARES (Desde la nueva vista account_balances)
+    const { data: sAcc } = await supabase
+      .from('account_balances') // <--- CAMBIO IMPORTANTE
+      .select('*')
+      .eq('scope', 'SHARED')
+
+    const { data: sTx } = await supabase
+      .from('transactions')
+      .select('*, created_by_profile:profiles(email)')
+      .eq('scope', 'SHARED')
+      .order('date', { ascending: false })
+      .limit(5)
+
     setPersonalData({ accounts: pAcc || [], transactions: pTx || [] })
     setSharedData({ accounts: sAcc || [], transactions: sTx || [] })
     setLoading(false)
@@ -36,9 +62,10 @@ export default function Dashboard() {
 
   useEffect(() => { fetchData() }, [])
 
-  // Componente interno para renderizar la lista (Reutilizable)
+  // Componente de Lista de Cuentas con SALDO REAL
   const AccountList = ({ data }: { data: any[] }) => (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {/* Filtramos solo ACTIVOS (Bancos/Efectivo) */}
       {data.filter(a => a.type === 'ASSET').map((acc) => (
         <Card key={acc.id}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -46,8 +73,11 @@ export default function Dashboard() {
             <div className="text-2xl">{acc.icon}</div>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">Ver saldo</div>
-            <p className="text-xs text-muted-foreground">Cuenta activa</p>
+            {/* Aquí mostramos el saldo real que viene de la base de datos */}
+            <div className={`text-2xl font-bold ${acc.current_balance < 0 ? 'text-red-600' : 'text-green-700'}`}>
+              {formatCurrency(acc.current_balance)}
+            </div>
+            <p className="text-xs text-muted-foreground">Saldo actual</p>
           </CardContent>
         </Card>
       ))}
@@ -70,8 +100,8 @@ export default function Dashboard() {
                 <p className="text-xs text-muted-foreground">{tx.date} • {tx.created_by_profile?.email.split('@')[0]}</p>
               </div>
               <div className="flex items-center font-medium">
-                <ArrowDownRight className="mr-1 h-4 w-4 text-red-500" />
-                <span className="text-sm">Ver detalle</span>
+                <ArrowDownRight className="mr-1 h-4 w-4 text-gray-400" />
+                <span className="text-sm text-gray-500">Registrado</span>
               </div>
             </div>
           ))}
@@ -93,7 +123,7 @@ export default function Dashboard() {
         </TabsList>
         
         <TabsContent value="personal" className="space-y-4">
-          {loading ? <p>Cargando...</p> : (
+          {loading ? <p>Cargando saldos...</p> : (
             <>
               <AccountList data={personalData.accounts} />
               <TransactionList data={personalData.transactions} />
@@ -102,7 +132,7 @@ export default function Dashboard() {
         </TabsContent>
         
         <TabsContent value="shared" className="space-y-4">
-          {loading ? <p>Cargando...</p> : (
+          {loading ? <p>Cargando saldos...</p> : (
              <>
               <AccountList data={sharedData.accounts} />
               <TransactionList data={sharedData.transactions} />
