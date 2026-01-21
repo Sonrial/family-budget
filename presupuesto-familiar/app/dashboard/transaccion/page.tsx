@@ -1,34 +1,49 @@
 'use client'
+import { useSearchParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Label } from "@/components/ui/label"
+import { ArrowLeft } from 'lucide-react'
+import Link from 'next/link'
+
+// Dentro de src/app/dashboard/transaccion/page.tsx
 
 export default function NuevaTransaccion() {
   const supabase = createClient()
   const router = useRouter()
-  
-  // Estado del formulario
-  const [description, setDescription] = useState('')
-  const [amount, setAmount] = useState('')
-  const [type, setType] = useState('GASTO') // GASTO, INGRESO, APORTE
-  const [scope, setScope] = useState('PERSONAL')
-  
-  // Listas de cuentas para los selectores
-  const [assets, setAssets] = useState<any[]>([]) // Cuentas de dinero
-  const [categories, setCategories] = useState<any[]>([]) // Categorías de gasto/ingreso
-  
-  const [selectedAsset, setSelectedAsset] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState('')
+  const searchParams = useSearchParams()
 
+  const [loading, setLoading] = useState(false)
+
+  // --- BLOQUE DE ESTADOS (Corregido) ---
+  const [description, setDescription] = useState(searchParams.get('desc') || '')
+  const [amount, setAmount] = useState(searchParams.get('amount') || '')
+  const [type, setType] = useState(searchParams.get('type') || 'GASTO') 
+  const [scope, setScope] = useState(searchParams.get('scope') || 'PERSONAL')
+  
+  // ESTA ES LA LÍNEA QUE FALTABA:
+  const [selectedAsset, setSelectedAsset] = useState('') 
+  
+  const [selectedCategory, setSelectedCategory] = useState(searchParams.get('cat') || '')
+  
+  // Listas para los desplegables
+  const [assets, setAssets] = useState<any[]>([]) 
+  const [categories, setCategories] = useState<any[]>([]) 
+  // -------------------------------------
+
+  // ... (el resto del código sigue igual)
   useEffect(() => {
     const loadAccounts = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Cargar cuentas según el scope seleccionado
-      // Si es PERSONAL: Mis cuentas. Si es SHARED: Cuentas del hogar.
       let query = supabase.from('accounts').select('*').eq('scope', scope)
-      
       if (scope === 'PERSONAL') {
         query = query.eq('user_id', user.id)
       }
@@ -44,15 +59,15 @@ export default function NuevaTransaccion() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
     const val = parseFloat(amount)
     if (!val || !selectedAsset || (!selectedCategory && type !== 'APORTE')) {
-        alert('Completa todos los campos'); return;
+        alert('Completa todos los campos'); setLoading(false); return;
     }
 
-    // 1. Crear Cabecera de Transacción
     const { data: tx, error: txError } = await supabase.from('transactions').insert({
       description,
       scope,
@@ -60,91 +75,108 @@ export default function NuevaTransaccion() {
       created_by: user.id
     }).select().single()
 
-    if (txError) { alert('Error creando TX'); return }
+    if (txError) { alert('Error creando TX'); setLoading(false); return }
 
-    // 2. Crear Líneas Contables (Partida Doble)
     const lines = []
-
     if (type === 'GASTO') {
-      // GASTO: Debito al Gasto (+), Crédito al Activo (-)
-      lines.push({ transaction_id: tx.id, account_id: selectedCategory, amount: val }) // Gasto aumenta
-      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: -val })   // Dinero disminuye
+      lines.push({ transaction_id: tx.id, account_id: selectedCategory, amount: val }) 
+      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: -val })   
     } else if (type === 'INGRESO') {
-      // INGRESO: Debito al Activo (+), Crédito al Ingreso (-)
-      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: val })    // Dinero aumenta
-      lines.push({ transaction_id: tx.id, account_id: selectedCategory, amount: -val }) // Ingreso (Naturaleza Crédito)
-    } else if (type === 'APORTE') {
-        // LÓGICA ESPECIAL: De Personal a Shared
-        // Esto requeriría una transacción compleja cruzada, 
-        // Para el MVP, lo simplificamos registrándolo en Shared como Ingreso de Aporte
-        // y el usuario debería registrar manualmente su salida personal.
-        // Ojo: En V2 automatizaremos esto. Por ahora, regístralo como INGRESO al fondo común.
+      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: val })    
+      lines.push({ transaction_id: tx.id, account_id: selectedCategory, amount: -val }) 
     }
 
     const { error: linesError } = await supabase.from('transaction_lines').insert(lines)
     
     if (linesError) alert('Error en líneas contables')
     else router.push('/dashboard')
+    setLoading(false)
   }
 
   return (
-    <div className="max-w-lg mx-auto bg-white p-8 rounded shadow">
-      <h2 className="text-xl font-bold mb-4">Registrar Movimiento</h2>
-      
-      <div className="mb-4 flex gap-4">
-        <label className="flex items-center gap-2">
-          <input type="radio" checked={scope === 'PERSONAL'} onChange={() => setScope('PERSONAL')} />
-          Personal
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="radio" checked={scope === 'SHARED'} onChange={() => setScope('SHARED')} />
-          Familiar (Fondo Común)
-        </label>
-      </div>
+    <div className="max-w-xl mx-auto py-6">
+      <Link href="/dashboard" className="flex items-center text-sm text-gray-500 mb-4 hover:text-blue-600">
+        <ArrowLeft className="w-4 h-4 mr-1" /> Volver al Dashboard
+      </Link>
 
-      <div className="mb-4 flex gap-2">
-        <button type="button" onClick={() => setType('GASTO')} 
-          className={`flex-1 p-2 rounded ${type === 'GASTO' ? 'bg-red-100 border-red-500 border' : 'bg-gray-100'}`}>
-          Gasto 📉
-        </button>
-        <button type="button" onClick={() => setType('INGRESO')} 
-          className={`flex-1 p-2 rounded ${type === 'INGRESO' ? 'bg-green-100 border-green-500 border' : 'bg-gray-100'}`}>
-          Ingreso 📈
-        </button>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-xl text-center">Registrar Movimiento</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            
+            {/* 1. SELECTOR DE SCOPE (Personal vs Familiar) */}
+            <div className="space-y-2">
+              <Label>¿De quién es el movimiento?</Label>
+              <Tabs defaultValue="PERSONAL" onValueChange={(v) => setScope(v)} className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="PERSONAL">👤 Personal</TabsTrigger>
+                  <TabsTrigger value="SHARED">🏠 Familiar</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <input 
-          type="text" placeholder="Descripción (ej. Mercado Éxito)" 
-          className="w-full p-2 border rounded"
-          value={description} onChange={e => setDescription(e.target.value)}
-        />
-        <input 
-          type="number" placeholder="Monto (COP)" 
-          className="w-full p-2 border rounded"
-          value={amount} onChange={e => setAmount(e.target.value)}
-        />
+            {/* 2. TIPO DE MOVIMIENTO (Gasto vs Ingreso) */}
+            <div className="space-y-2">
+              <Label>Tipo de Transacción</Label>
+              <div className="flex gap-4">
+                <div 
+                  onClick={() => setType('GASTO')}
+                  className={`flex-1 p-4 rounded-lg border-2 cursor-pointer text-center transition-all ${type === 'GASTO' ? 'border-red-500 bg-red-50 text-red-700 font-bold' : 'border-gray-200 hover:border-gray-300'}`}
+                >
+                  📉 Gasto
+                </div>
+                <div 
+                  onClick={() => setType('INGRESO')}
+                  className={`flex-1 p-4 rounded-lg border-2 cursor-pointer text-center transition-all ${type === 'INGRESO' ? 'border-green-500 bg-green-50 text-green-700 font-bold' : 'border-gray-200 hover:border-gray-300'}`}
+                >
+                  📈 Ingreso
+                </div>
+              </div>
+            </div>
 
-        <select 
-          className="w-full p-2 border rounded"
-          value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)}
-        >
-          <option value="">-- Selecciona cuenta de pago (Banco/Efectivo) --</option>
-          {assets.map(a => <option key={a.id} value={a.id}>{a.icon} {a.name}</option>)}
-        </select>
+            {/* 3. DATOS DE LA TRANSACCIÓN */}
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="desc">Descripción</Label>
+                <Input id="desc" placeholder="Ej. Mercado D1, Pago Netflix..." value={description} onChange={e => setDescription(e.target.value)} />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="amount">Monto (COP)</Label>
+                <Input id="amount" type="number" placeholder="0" className="text-lg font-mono" value={amount} onChange={e => setAmount(e.target.value)} />
+              </div>
 
-        <select 
-          className="w-full p-2 border rounded"
-          value={selectedCategory} onChange={e => setSelectedCategory(e.target.value)}
-        >
-          <option value="">-- Selecciona Categoría --</option>
-          {categories.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Cuenta de Origen</Label>
+                  <Select onValueChange={setSelectedAsset}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                    <SelectContent>
+                      {assets.map(a => <SelectItem key={a.id} value={a.id}>{a.icon} {a.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-        <button className="w-full bg-blue-600 text-white py-3 rounded hover:bg-blue-700">
-          Guardar Movimiento
-        </button>
-      </form>
+                <div className="space-y-2">
+                  <Label>Categoría</Label>
+                  <Select onValueChange={setSelectedCategory}>
+                    <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+                    <SelectContent>
+                      {categories.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <Button disabled={loading} type="submit" className="w-full text-lg py-6 bg-blue-700 hover:bg-blue-800">
+              {loading ? 'Guardando...' : '💾 Guardar Transacción'}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

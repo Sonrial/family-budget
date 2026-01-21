@@ -28,6 +28,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <div className="flex gap-4">
           <Link href="/dashboard" className="hover:text-blue-200">Resumen</Link>
           <Link href="/dashboard/transaccion" className="hover:text-blue-200">Nueva Transacción</Link>
+          <Link href="/dashboard/obligaciones" className="hover:text-blue-200">Deudas y Pagos</Link>
           <button onClick={async () => {
              await supabase.auth.signOut()
              router.push('/')
