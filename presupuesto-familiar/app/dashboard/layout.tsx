@@ -24,7 +24,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-screen bg-gray-50 text-black">
       <nav className="bg-blue-800 text-white p-4 flex justify-between items-center shadow-lg">
-        <div className="font-bold text-xl">🏠 Familia Barrios</div>
+        <div className="font-bold text-xl">PRESUPUESTO FAMILIAR</div>
         <div className="flex gap-4">
           <Link href="/dashboard" className="hover:text-blue-200">Resumen</Link>
           <Link href="/dashboard/transaccion" className="hover:text-blue-200">Nueva Transacción</Link>
