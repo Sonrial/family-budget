@@ -12,16 +12,16 @@ import { Textarea } from "@/components/ui/textarea" // Asegúrate de tener este 
 import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 
+
 function TransactionForm() {
   const supabase = createClient()
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(false)
   
-  // Datos del formulario
   const [description, setDescription] = useState(searchParams.get('desc') || '')
-  const [notes, setNotes] = useState('') // <--- NUEVO CAMPO NOTAS
-  const [amount, setAmount] = useState(searchParams.get('amount') || '')
+  const [notes, setNotes] = useState('')
+  const [amount, setAmount] = useState(searchParams.get('amount') || '') // Aquí guardaremos el texto con puntos "1.000"
   const [type, setType] = useState(searchParams.get('type') || 'GASTO') 
   const [scope, setScope] = useState(searchParams.get('scope') || 'PERSONAL')
   
@@ -51,22 +51,41 @@ function TransactionForm() {
     loadAccounts()
   }, [scope, type])
 
+  // --- FUNCIÓN MAGICA PARA FORMATO DE MILES ---
+  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // 1. Quitamos cualquier cosa que no sea número (puntos, letras)
+    const rawValue = e.target.value.replace(/\D/g, '')
+    
+    // 2. Si está vacío, lo dejamos vacío
+    if (!rawValue) {
+      setAmount('')
+      return
+    }
+
+    // 3. Formateamos con puntos (Ej. 1000 -> 1.000)
+    const formatted = new Intl.NumberFormat('es-CO').format(parseInt(rawValue))
+    setAmount(formatted)
+  }
+  // ---------------------------------------------
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const val = parseFloat(amount)
+    // LIMPIEZA: Antes de guardar, quitamos los puntos para que sea un número real
+    const cleanAmount = amount.replace(/\./g, '')
+    const val = parseFloat(cleanAmount)
+
     if (!val || !selectedAsset || (!selectedCategory && type !== 'APORTE')) {
         alert('Completa los campos obligatorios'); setLoading(false); return;
     }
 
-    // 1. Crear Transacción (Ahora guardamos notes y type)
     const { data: tx, error: txError } = await supabase.from('transactions').insert({
       description,
-      notes, // <--- GUARDAMOS LA NOTA
-      type,  // <--- GUARDAMOS EL TIPO (GASTO/INGRESO)
+      notes,
+      type,
       scope,
       date: new Date().toISOString(),
       created_by: user.id
@@ -74,7 +93,6 @@ function TransactionForm() {
 
     if (txError) { alert('Error creando TX'); setLoading(false); return }
 
-    // 2. Crear Líneas Contables
     const lines = []
     if (type === 'GASTO') {
       lines.push({ transaction_id: tx.id, account_id: selectedCategory, amount: val }) 
@@ -101,7 +119,6 @@ function TransactionForm() {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
-          {/* SCOPE Y TIPO */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
              <div className="space-y-2">
                 <Label>¿De quién?</Label>
@@ -118,7 +135,6 @@ function TransactionForm() {
              </div>
           </div>
 
-          {/* DESCRIPCIÓN Y MONTO */}
           <div className="grid gap-4">
             <div className="space-y-2">
               <Label>Descripción Corta</Label>
@@ -127,20 +143,20 @@ function TransactionForm() {
             
             <div className="space-y-2">
               <Label>Monto (COP)</Label>
-              <Input type="number" placeholder="0" className="text-lg font-mono font-bold" value={amount} onChange={e => setAmount(e.target.value)} />
-            </div>
-
-             {/* --- AQUÍ ESTÁ EL NUEVO CAMPO DE NOTAS --- */}
-            <div className="space-y-2">
-              <Label className="text-blue-600">📝 Notas / Detalles (Opcional)</Label>
-              <Textarea 
-                placeholder="Ej. Cambio de bujías, radiador y repuestos..." 
-                value={notes} 
-                onChange={e => setNotes(e.target.value)} 
-                className="resize-none"
+              {/* CAMBIAMOS TYPE="NUMBER" POR TYPE="TEXT" */}
+              <Input 
+                type="text" 
+                placeholder="0" 
+                className="text-lg font-mono" // QUITAMOS EL FONT-BOLD
+                value={amount} 
+                onChange={handleAmountChange} 
               />
             </div>
-            {/* ----------------------------------------- */}
+
+            <div className="space-y-2">
+              <Label className="text-blue-600">📝 Notas / Detalles (Opcional)</Label>
+              <Textarea placeholder="Ej. Cambio de bujías..." value={notes} onChange={e => setNotes(e.target.value)} className="resize-none" />
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
