@@ -1,9 +1,11 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import { useRouter } from 'next/navigation' //
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { ArrowDownRight, Wallet, Users } from 'lucide-react'
+import { Button } from "@/components/ui/button"
+import { ArrowDownRight, ArrowUpRight, Wallet, Users } from 'lucide-react'
 
 // Utilidad para formatear dinero colombiano (COP)
 const formatCurrency = (amount: number) => {
@@ -83,32 +85,47 @@ export default function Dashboard() {
       ))}
     </div>
   )
+  
+  const TransactionList = ({ data }: { data: any[] }) => {
+    const router = useRouter() // Asegúrate de importar useRouter arriba
 
-  const TransactionList = ({ data }: { data: any[] }) => (
-    <Card className="mt-6">
-      <CardHeader>
-        <CardTitle>Últimos Movimientos</CardTitle>
-        <CardDescription>Tus transacciones recientes.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {data.length === 0 && <p className="text-sm text-gray-500">No hay movimientos.</p>}
-          {data.map((tx) => (
-            <div key={tx.id} className="flex items-center justify-between border-b pb-2 last:border-0">
-              <div className="space-y-1">
-                <p className="text-sm font-medium leading-none">{tx.description}</p>
-                <p className="text-xs text-muted-foreground">{tx.date} • {tx.created_by_profile?.email.split('@')[0]}</p>
+    return (
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Últimos Movimientos</CardTitle>
+          <CardDescription>Tus transacciones recientes.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            {data.length === 0 && <p className="text-sm text-gray-500">No hay movimientos.</p>}
+            {data.map((tx) => (
+              <div key={tx.id} className="flex items-center justify-between border-b pb-2 last:border-0">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    {/* ICONO DE COLOR SEGÚN EL TIPO */}
+                    {tx.type === 'INGRESO' 
+                        ? <ArrowUpRight className="h-5 w-5 text-green-600" /> 
+                        : <ArrowDownRight className="h-5 w-5 text-red-600" />
+                    }
+                    <p className="text-sm font-medium leading-none">{tx.description}</p>
+                  </div>
+                  {/* Mostramos el inicio de la nota si existe */}
+                  {tx.notes && <p className="text-xs text-gray-400 italic pl-7 truncate max-w-[200px]">{tx.notes}</p>}
+                  <p className="text-xs text-muted-foreground pl-7">{new Date(tx.date).toLocaleDateString()} • {tx.created_by_profile?.email.split('@')[0]}</p>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => router.push(`/dashboard/movimiento/${tx.id}`)}>
+                    Ver / Editar
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center font-medium">
-                <ArrowDownRight className="mr-1 h-4 w-4 text-gray-400" />
-                <span className="text-sm text-gray-500">Registrado</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  )
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
 
   return (
     <div className="space-y-6">
