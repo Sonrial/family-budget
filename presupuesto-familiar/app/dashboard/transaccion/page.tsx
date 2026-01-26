@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { ArrowLeft, Users, User } from 'lucide-react'
+import { ArrowLeft, Users, User, CalendarIcon } from 'lucide-react' // Nuevo icono
 import Link from 'next/link'
 
 function TransactionForm() {
@@ -25,66 +25,76 @@ function TransactionForm() {
   const [type, setType] = useState(searchParams.get('type') || 'GASTO') 
   const [scope, setScope] = useState(searchParams.get('scope') || 'PERSONAL')
   
+  // --- NUEVO: FECHA (Por defecto HOY) ---
+  // Obtenemos la fecha local en formato YYYY-MM-DD para el input
+  const [date, setDate] = useState(() => {
+    const now = new Date()
+    return now.toISOString().split('T')[0] 
+  })
+  
   // Lógica de Transferencia
-  const [transferMode, setTransferMode] = useState('POOL') // 'POOL' (Fondo comun) o 'MEMBER' (Persona)
+  const [transferMode, setTransferMode] = useState('POOL')
   const [targetUserId, setTargetUserId] = useState('')
   
   const [selectedAsset, setSelectedAsset] = useState('') 
   const [selectedDestination, setSelectedDestination] = useState(searchParams.get('cat') || '')
   
   // Listas
-  const [myAssets, setMyAssets] = useState<any[]>([])      // Mis cuentas origen
-  const [destOptions, setDestOptions] = useState<any[]>([]) // Opciones destino
-  const [familyMembers, setFamilyMembers] = useState<any[]>([]) // Lista de usuarios
-  
-  // Carga inicial de usuarios (para la lista desplegable)
+  const [myAssets, setMyAssets] = useState<any[]>([])      
+  const [destOptions, setDestOptions] = useState<any[]>([]) 
+  const [familyMembers, setFamilyMembers] = useState<any[]>([])
+  const [myProfile, setMyProfile] = useState<any>(null) // Para saber mi nombre
+
+  // Carga inicial de usuarios y mi perfil
   useEffect(() => {
     const loadFamily = async () => {
+        // 1. Cargar lista de familia
         const { data } = await supabase.from('profiles').select('*')
         if (data) setFamilyMembers(data)
+
+        // 2. Cargar mi propio perfil (para saber mi nombre en la transferencia)
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user && data) {
+            const me = data.find(p => p.id === user.id)
+            setMyProfile(me)
+        }
     }
     loadFamily()
   }, [])
 
-  // Carga de cuentas según selección
+  // Carga de cuentas
   useEffect(() => {
     const loadAccounts = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // 1. ORIGEN: Siempre mis cuentas personales (ASSET)
+      // ORIGEN
       const { data: myAcc } = await supabase.from('accounts')
         .select('*')
         .eq('user_id', user.id)
         .eq('type', 'ASSET')
       if (myAcc) setMyAssets(myAcc)
 
-      // 2. DESTINO: Depende del TIPO y del MODO
+      // DESTINO
       let query = supabase.from('accounts').select('*')
 
       if (type === 'GASTO') {
-        // Gastos Personales o Familiares
         query = query.eq('scope', scope)
         if (scope === 'PERSONAL') query = query.eq('user_id', user.id)
-        query = query.in('type', ['EXPENSE', 'LIABILITY']) // Gastos o Deudas
+        query = query.in('type', ['EXPENSE', 'LIABILITY'])
       } 
       else if (type === 'INGRESO') {
-        // Ingresos
         query = query.eq('scope', scope)
         if (scope === 'PERSONAL') query = query.eq('user_id', user.id)
         query = query.eq('type', 'INCOME')
       } 
       else if (type === 'APORTE') {
-        // TRANSFERENCIA
         if (transferMode === 'POOL') {
-            // A Fondo Común (Cuentas SHARED)
             query = query.eq('scope', 'SHARED').eq('type', 'ASSET')
         } else if (transferMode === 'MEMBER') {
-            // A Otro Miembro (Cuentas PERSONAL de otro ID)
             if (targetUserId) {
                 query = query.eq('user_id', targetUserId).eq('type', 'ASSET')
             } else {
-                // Si no ha seleccionado usuario, no mostramos nada aún
                 setDestOptions([])
                 return
             }
@@ -117,24 +127,45 @@ function TransactionForm() {
         alert('Completa los campos'); setLoading(false); return;
     }
 
-    // Definir Scope final
-    // Si es transferencia entre personas, lo marcamos SHARED para que ambos lo vean en el historial familiar
-    // o podríamos mantenerlo PERSONAL pero con permisos especiales. Por simplicidad, usemos SHARED.
+    // --- CONSTRUCCIÓN INTELIGENTE DE LA DESCRIPCIÓN ---
+    let finalDescription = description
+    
+    if (type === 'APORTE') {
+        // Si el usuario no escribió nada específico, generamos la frase automática
+        if (!description || description.trim() === '') {
+            const myName = myProfile?.email?.split('@')[0] || 'Mí' // Ej: "jose"
+            
+            if (transferMode === 'POOL') {
+                finalDescription = `Transferencia: ${myName} ➔ Fondo Común`
+            } else {
+                const targetUser = familyMembers.find(m => m.id === targetUserId)
+                const targetName = targetUser?.email?.split('@')[0] || 'Destinatario'
+                finalDescription = `Transferencia: ${myName} ➔ ${targetName}`
+            }
+        }
+    } else {
+        // Si es gasto/ingreso normal y está vacío
+        if (!finalDescription) finalDescription = type === 'GASTO' ? 'Gasto General' : 'Ingreso'
+    }
+
+    // --- MANEJO DE LA FECHA SELECCIONADA ---
+    // Agregamos una hora fija (12:00) para evitar problemas de zona horaria que cambien el día
+    const finalDateISO = new Date(date + 'T12:00:00').toISOString()
+
     const finalScope = type === 'APORTE' ? 'SHARED' : scope
 
     const { data: tx, error: txError } = await supabase.from('transactions').insert({
-      description: description || (type === 'APORTE' ? 'Transferencia' : 'Movimiento'),
+      description: finalDescription, // Usamos la descripción generada
       notes,
       type, 
       scope: finalScope, 
-      date: new Date().toISOString(),
+      date: finalDateISO, // Usamos la fecha seleccionada
       created_by: user.id
     }).select().single()
 
     if (txError) { alert('Error creando TX'); setLoading(false); return }
 
     const lines = []
-    
     if (type === 'GASTO') {
       lines.push({ transaction_id: tx.id, account_id: selectedDestination, amount: val }) 
       lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: -val })      
@@ -144,9 +175,8 @@ function TransactionForm() {
       lines.push({ transaction_id: tx.id, account_id: selectedDestination, amount: -val }) 
     } 
     else if (type === 'APORTE') {
-      // Lógica Transferencia: Sale de MÍ (-), Entra al DESTINO (+)
-      lines.push({ transaction_id: tx.id, account_id: selectedDestination, amount: val })  // Destino (+)
-      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: -val })       // Origen (-)
+      lines.push({ transaction_id: tx.id, account_id: selectedDestination, amount: val })  
+      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: -val })       
     }
 
     const { error: linesError } = await supabase.from('transaction_lines').insert(lines)
@@ -167,7 +197,6 @@ function TransactionForm() {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
           
-          {/* TIPO DE TRANSACCIÓN */}
           <div className="space-y-2">
             <Label>Tipo</Label>
             <div className="flex gap-2">
@@ -177,7 +206,6 @@ function TransactionForm() {
             </div>
           </div>
 
-          {/* SCOPE (Solo si NO es Transferencia) */}
           {type !== 'APORTE' && (
             <div className="space-y-2">
                 <Label>Ámbito</Label>
@@ -187,22 +215,15 @@ function TransactionForm() {
             </div>
           )}
 
-          {/* MENÚ ESPECIAL DE TRANSFERENCIA */}
           {type === 'APORTE' && (
              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-4">
                 <Label className="text-blue-800 font-bold">¿Hacia dónde va el dinero?</Label>
                 <Tabs defaultValue="POOL" onValueChange={(v) => {setTransferMode(v); setSelectedDestination(''); }}>
                     <TabsList className="grid w-full grid-cols-2">
-                        <TabsTrigger value="POOL" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                            <Users className="w-4 h-4 mr-2"/> Fondo Común
-                        </TabsTrigger>
-                        <TabsTrigger value="MEMBER" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white">
-                            <User className="w-4 h-4 mr-2"/> Miembro Familia
-                        </TabsTrigger>
+                        <TabsTrigger value="POOL" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white"><Users className="w-4 h-4 mr-2"/> Fondo Común</TabsTrigger>
+                        <TabsTrigger value="MEMBER" className="data-[state=active]:bg-blue-600 data-[state=active]:text-white"><User className="w-4 h-4 mr-2"/> Miembro Familia</TabsTrigger>
                     </TabsList>
                 </Tabs>
-
-                {/* Si elige MIEMBRO, mostramos selector de usuarios */}
                 {transferMode === 'MEMBER' && (
                     <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                         <Label>Selecciona al familiar:</Label>
@@ -220,9 +241,33 @@ function TransactionForm() {
           )}
 
           <div className="grid gap-4">
+            {/* CAMPO DE FECHA NUEVO */}
+            <div className="space-y-2">
+               <Label>Fecha del Movimiento</Label>
+               <div className="relative">
+                  <Input 
+                    type="date" 
+                    value={date} 
+                    onChange={(e) => setDate(e.target.value)}
+                    className="pl-10 text-lg font-medium" 
+                  />
+                  <CalendarIcon className="w-5 h-5 absolute left-3 top-3 text-gray-500 pointer-events-none"/>
+               </div>
+            </div>
+
             <div className="space-y-2">
               <Label>Descripción</Label>
-              <Input placeholder={type === 'APORTE' ? "Ej. Para el almuerzo..." : "Descripción..."} value={description} onChange={e => setDescription(e.target.value)} />
+              {/* Placeholder dinámico para indicar que se autocompleta si lo dejas vacío */}
+              <Input 
+                placeholder={type === 'APORTE' ? "(Opcional) Ej. Para el arriendo" : "Descripción del gasto..."} 
+                value={description} 
+                onChange={e => setDescription(e.target.value)} 
+              />
+              {type === 'APORTE' && !description && (
+                  <p className="text-xs text-blue-600 animate-pulse">
+                     💡 Se guardará como: "Transferencia: {myProfile?.email?.split('@')[0] || 'Yo'} ➔ {transferMode === 'POOL' ? 'Fondo Común' : (familyMembers.find(m => m.id === targetUserId)?.email?.split('@')[0] || '...')}"
+                  </p>
+              )}
             </div>
             
             <div className="space-y-2">
@@ -231,7 +276,6 @@ function TransactionForm() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* ORIGEN: Siempre muestra MIS bancos */}
               <div className="space-y-2">
                 <Label>{type === 'APORTE' ? 'Desde (Tu cuenta)' : 'Cuenta Origen'}</Label>
                 <Select onValueChange={setSelectedAsset} value={selectedAsset}>
@@ -240,7 +284,6 @@ function TransactionForm() {
                 </Select>
               </div>
 
-              {/* DESTINO: Dinámico según lo seleccionado arriba */}
               <div className="space-y-2">
                 <Label>
                     {type === 'APORTE' 
@@ -254,7 +297,6 @@ function TransactionForm() {
               </div>
             </div>
              
-             {/* Notas */}
              <div className="space-y-2">
                 <Label className="text-gray-500">📝 Notas (Opcional)</Label>
                 <Textarea value={notes} onChange={e => setNotes(e.target.value)} className="resize-none h-20" />
