@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { ArrowLeft, Users, User, CalendarIcon } from 'lucide-react' // Nuevo icono
+import { ArrowLeft, Users, User, CalendarIcon } from 'lucide-react'
 import Link from 'next/link'
 
 function TransactionForm() {
@@ -25,8 +25,7 @@ function TransactionForm() {
   const [type, setType] = useState(searchParams.get('type') || 'GASTO') 
   const [scope, setScope] = useState(searchParams.get('scope') || 'PERSONAL')
   
-  // --- NUEVO: FECHA (Por defecto HOY) ---
-  // Obtenemos la fecha local en formato YYYY-MM-DD para el input
+  // FECHA
   const [date, setDate] = useState(() => {
     const now = new Date()
     return now.toISOString().split('T')[0] 
@@ -40,19 +39,17 @@ function TransactionForm() {
   const [selectedDestination, setSelectedDestination] = useState(searchParams.get('cat') || '')
   
   // Listas
-  const [myAssets, setMyAssets] = useState<any[]>([])      
-  const [destOptions, setDestOptions] = useState<any[]>([]) 
+  const [originAccounts, setOriginAccounts] = useState<any[]>([]) // Cuentas de Origen     
+  const [destOptions, setDestOptions] = useState<any[]>([])       // Opciones de Destino
   const [familyMembers, setFamilyMembers] = useState<any[]>([])
-  const [myProfile, setMyProfile] = useState<any>(null) // Para saber mi nombre
+  const [myProfile, setMyProfile] = useState<any>(null) 
 
   // Carga inicial de usuarios y mi perfil
   useEffect(() => {
     const loadFamily = async () => {
-        // 1. Cargar lista de familia
         const { data } = await supabase.from('profiles').select('*')
         if (data) setFamilyMembers(data)
 
-        // 2. Cargar mi propio perfil (para saber mi nombre en la transferencia)
         const { data: { user } } = await supabase.auth.getUser()
         if (user && data) {
             const me = data.find(p => p.id === user.id)
@@ -62,38 +59,51 @@ function TransactionForm() {
     loadFamily()
   }, [])
 
-  // Carga de cuentas
+  // CARGA DE CUENTAS (Con corrección de filtros)
   useEffect(() => {
     const loadAccounts = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // ORIGEN
-      const { data: myAcc } = await supabase.from('accounts')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('type', 'ASSET')
-      if (myAcc) setMyAssets(myAcc)
+      // 1. CARGAR CUENTAS DE ORIGEN (Izquierda)
+      let queryOrigin = supabase.from('accounts').select('*').eq('type', 'ASSET')
 
-      // DESTINO
-      let query = supabase.from('accounts').select('*')
+      if (type === 'APORTE') {
+        // Si es TRANSFERENCIA, el dinero sale de MI bolsillo (Personal)
+        queryOrigin = queryOrigin.eq('user_id', user.id)
+      } else {
+        // Si es Gasto/Ingreso normal, respetamos la pestaña (Scope)
+        if (scope === 'PERSONAL') {
+            queryOrigin = queryOrigin.eq('scope', 'PERSONAL').eq('user_id', user.id)
+        } else {
+            // Si es FAMILIAR, mostramos cuentas compartidas (sin importar quién las creó)
+            queryOrigin = queryOrigin.eq('scope', 'SHARED')
+        }
+      }
+      
+      const { data: originData } = await queryOrigin
+      if (originData) setOriginAccounts(originData)
+
+
+      // 2. CARGAR DESTINOS (Derecha)
+      let queryDest = supabase.from('accounts').select('*')
 
       if (type === 'GASTO') {
-        query = query.eq('scope', scope)
-        if (scope === 'PERSONAL') query = query.eq('user_id', user.id)
-        query = query.in('type', ['EXPENSE', 'LIABILITY'])
+        queryDest = queryDest.eq('scope', scope)
+        if (scope === 'PERSONAL') queryDest = queryDest.eq('user_id', user.id)
+        queryDest = queryDest.in('type', ['EXPENSE', 'LIABILITY'])
       } 
       else if (type === 'INGRESO') {
-        query = query.eq('scope', scope)
-        if (scope === 'PERSONAL') query = query.eq('user_id', user.id)
-        query = query.eq('type', 'INCOME')
+        queryDest = queryDest.eq('scope', scope)
+        if (scope === 'PERSONAL') queryDest = queryDest.eq('user_id', user.id)
+        queryDest = queryDest.eq('type', 'INCOME')
       } 
       else if (type === 'APORTE') {
         if (transferMode === 'POOL') {
-            query = query.eq('scope', 'SHARED').eq('type', 'ASSET')
+            queryDest = queryDest.eq('scope', 'SHARED').eq('type', 'ASSET')
         } else if (transferMode === 'MEMBER') {
             if (targetUserId) {
-                query = query.eq('user_id', targetUserId).eq('type', 'ASSET')
+                queryDest = queryDest.eq('user_id', targetUserId).eq('type', 'ASSET')
             } else {
                 setDestOptions([])
                 return
@@ -101,7 +111,7 @@ function TransactionForm() {
         }
       }
 
-      const { data: destData } = await query
+      const { data: destData } = await queryDest
       if (destData) setDestOptions(destData)
     }
     loadAccounts()
@@ -127,14 +137,11 @@ function TransactionForm() {
         alert('Completa los campos'); setLoading(false); return;
     }
 
-    // --- CONSTRUCCIÓN INTELIGENTE DE LA DESCRIPCIÓN ---
     let finalDescription = description
     
     if (type === 'APORTE') {
-        // Si el usuario no escribió nada específico, generamos la frase automática
         if (!description || description.trim() === '') {
-            const myName = myProfile?.email?.split('@')[0] || 'Mí' // Ej: "jose"
-            
+            const myName = myProfile?.email?.split('@')[0] || 'Mí'
             if (transferMode === 'POOL') {
                 finalDescription = `Transferencia: ${myName} ➔ Fondo Común`
             } else {
@@ -144,22 +151,18 @@ function TransactionForm() {
             }
         }
     } else {
-        // Si es gasto/ingreso normal y está vacío
         if (!finalDescription) finalDescription = type === 'GASTO' ? 'Gasto General' : 'Ingreso'
     }
 
-    // --- MANEJO DE LA FECHA SELECCIONADA ---
-    // Agregamos una hora fija (12:00) para evitar problemas de zona horaria que cambien el día
     const finalDateISO = new Date(date + 'T12:00:00').toISOString()
-
     const finalScope = type === 'APORTE' ? 'SHARED' : scope
 
     const { data: tx, error: txError } = await supabase.from('transactions').insert({
-      description: finalDescription, // Usamos la descripción generada
+      description: finalDescription,
       notes,
       type, 
       scope: finalScope, 
-      date: finalDateISO, // Usamos la fecha seleccionada
+      date: finalDateISO,
       created_by: user.id
     }).select().single()
 
@@ -241,7 +244,6 @@ function TransactionForm() {
           )}
 
           <div className="grid gap-4">
-            {/* CAMPO DE FECHA NUEVO */}
             <div className="space-y-2">
                <Label>Fecha del Movimiento</Label>
                <div className="relative">
@@ -257,7 +259,6 @@ function TransactionForm() {
 
             <div className="space-y-2">
               <Label>Descripción</Label>
-              {/* Placeholder dinámico para indicar que se autocompleta si lo dejas vacío */}
               <Input 
                 placeholder={type === 'APORTE' ? "(Opcional) Ej. Para el arriendo" : "Descripción del gasto..."} 
                 value={description} 
@@ -276,14 +277,39 @@ function TransactionForm() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              
+              {/* --- SELECTOR DE ORIGEN ESTILIZADO (BADGES) --- */}
               <div className="space-y-2">
                 <Label>{type === 'APORTE' ? 'Desde (Tu cuenta)' : 'Cuenta Origen'}</Label>
                 <Select onValueChange={setSelectedAsset} value={selectedAsset}>
-                  <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
-                  <SelectContent>{myAssets.map(a => <SelectItem key={a.id} value={a.id}>{a.icon} {a.name}</SelectItem>)}</SelectContent>
+                  <SelectTrigger>
+                     <SelectValue placeholder="Seleccionar...">
+                        {selectedAsset && originAccounts.find(a => a.id === selectedAsset) ? (
+                            <div className="flex items-center">
+                                <span className="inline-flex items-center justify-center w-8 h-6 rounded bg-gray-100 border border-gray-200 font-bold text-xs text-gray-700 mr-2">
+                                    {originAccounts.find(a => a.id === selectedAsset).icon}
+                                </span>
+                                <span>{originAccounts.find(a => a.id === selectedAsset).name}</span>
+                            </div>
+                        ) : "Seleccionar..."}
+                     </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                      {originAccounts.map(a => (
+                        <SelectItem key={a.id} value={a.id}>
+                            <div className="flex items-center">
+                                <span className="inline-flex items-center justify-center w-8 h-6 rounded bg-gray-100 border border-gray-200 font-bold text-xs text-gray-700 mr-2">
+                                    {a.icon}
+                                </span>
+                                <span className="font-medium">{a.name}</span>
+                            </div>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
                 </Select>
               </div>
 
+              {/* --- SELECTOR DE DESTINO ESTILIZADO (BADGES) --- */}
               <div className="space-y-2">
                 <Label>
                     {type === 'APORTE' 
@@ -291,8 +317,30 @@ function TransactionForm() {
                         : 'Categoría / Destino'}
                 </Label>
                 <Select onValueChange={setSelectedDestination} value={selectedDestination} disabled={type === 'APORTE' && transferMode === 'MEMBER' && !targetUserId}>
-                  <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
-                  <SelectContent>{destOptions.map(a => <SelectItem key={a.id} value={a.id}>{a.icon} {a.name}</SelectItem>)}</SelectContent>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar...">
+                        {selectedDestination && destOptions.find(a => a.id === selectedDestination) ? (
+                            <div className="flex items-center">
+                                <span className="inline-flex items-center justify-center w-8 h-6 rounded bg-gray-100 border border-gray-200 font-bold text-xs text-gray-700 mr-2">
+                                    {destOptions.find(a => a.id === selectedDestination).icon}
+                                </span>
+                                <span>{destOptions.find(a => a.id === selectedDestination).name}</span>
+                            </div>
+                        ) : "Seleccionar..."}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {destOptions.map(a => (
+                        <SelectItem key={a.id} value={a.id}>
+                            <div className="flex items-center">
+                                <span className="inline-flex items-center justify-center w-8 h-6 rounded bg-gray-100 border border-gray-200 font-bold text-xs text-gray-700 mr-2">
+                                    {a.icon}
+                                </span>
+                                <span className="font-medium">{a.name}</span>
+                            </div>
+                        </SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </div>
             </div>
