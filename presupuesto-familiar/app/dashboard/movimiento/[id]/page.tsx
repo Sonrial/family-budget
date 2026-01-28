@@ -22,10 +22,9 @@ export default function DetalleMovimientoPage({ params }: { params: Promise<{ id
   
   const [tx, setTx] = useState<any>(null)
   
-  // Estados editables
   const [notes, setNotes] = useState('')
   const [amount, setAmount] = useState('') 
-  const [date, setDate] = useState('') // <--- NUEVO ESTADO PARA FECHA
+  const [date, setDate] = useState('')
 
   useEffect(() => {
     if (!txId) return
@@ -37,16 +36,15 @@ export default function DetalleMovimientoPage({ params }: { params: Promise<{ id
       setTx(data)
       setNotes(data.notes || '')
       
-      // Formatear fecha para el input (YYYY-MM-DD)
-      if (data.date) {
-        // Tomamos la parte de la fecha del ISO string
-        setDate(new Date(data.date).toISOString().split('T')[0])
-      }
+      if (data.date) setDate(new Date(data.date).toISOString().split('T')[0])
 
-      // Formatear monto
       const positiveLine = data.transaction_lines.find((l: any) => l.amount > 0)
       if (positiveLine) {
-        const formatted = new Intl.NumberFormat('es-CO').format(positiveLine.amount)
+        // Al cargar, formateamos bonito (es-CO usa coma para decimales)
+        const formatted = new Intl.NumberFormat('es-CO', { 
+            minimumFractionDigits: 0, 
+            maximumFractionDigits: 2 
+        }).format(positiveLine.amount)
         setAmount(formatted)
       }
       
@@ -55,32 +53,59 @@ export default function DetalleMovimientoPage({ params }: { params: Promise<{ id
     fetchTx()
   }, [txId])
 
-  // Lógica de formato al escribir monto
-  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawValue = e.target.value.replace(/\D/g, '')
-    if (!rawValue) { setAmount(''); return }
-    const formatted = new Intl.NumberFormat('es-CO').format(parseInt(rawValue))
-    setAmount(formatted)
+  // --- LÓGICA DE FORMATO MEJORADA (OnBlur) ---
+  
+  // 1. Escribir libremente
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value.replace(/[^0-9.,]/g, '')
+    setAmount(val)
   }
+
+  // 2. Al entrar, limpiar formato para editar fácil
+  const handleFocus = () => {
+    if (!amount) return
+    setAmount(amount.replace(/\./g, ''))
+  }
+
+  // 3. Al salir, aplicar formato bonito
+  const handleBlur = () => {
+    if (!amount) return
+    let val = amount
+    val = val.replace(/\./g, ',') // Puntos a comas
+    
+    const parts = val.split(',')
+    const integerPart = parts[0].replace(/\D/g, '')
+    const decimalPart = parts[1]
+
+    if (!integerPart) { setAmount(''); return }
+
+    const formattedInt = new Intl.NumberFormat('es-CO').format(BigInt(integerPart))
+
+    if (decimalPart !== undefined) {
+        setAmount(`${formattedInt},${decimalPart.slice(0, 2)}`)
+    } else {
+        setAmount(formattedInt)
+    }
+  }
+  // ------------------------------------
 
   const handleUpdate = async () => {
     setSaving(true)
-    const cleanAmount = amount.replace(/\./g, '')
+    
+    // LIMPIEZA PARA BD
+    let cleanAmount = amount.replace(/\./g, '').replace(',', '.')
     const newAmount = parseFloat(cleanAmount)
     
     if (!newAmount || newAmount <= 0) return alert("Monto inválido")
     if (!date) return alert("Fecha inválida")
 
-    // Preparamos la nueva fecha (añadiendo hora media para evitar saltos de día)
     const finalDateISO = new Date(date + 'T12:00:00').toISOString()
 
-    // 1. Actualizamos la Transacción (Nota y Fecha)
     await supabase.from('transactions').update({ 
         notes,
-        date: finalDateISO // <--- ACTUALIZAMOS FECHA
+        date: finalDateISO
     }).eq('id', txId)
 
-    // 2. Actualizamos los Montos en las líneas
     const { data: lines } = await supabase.from('transaction_lines').select('*').eq('transaction_id', txId)
     if (lines) {
         for (const line of lines) {
@@ -120,7 +145,6 @@ export default function DetalleMovimientoPage({ params }: { params: Promise<{ id
                 <div className="font-bold text-lg">{tx.description}</div>
             </div>
 
-            {/* CAMPO DE FECHA EDITABLE */}
             <div className="space-y-2">
                 <Label>Fecha (Editable)</Label>
                 <div className="relative">
@@ -139,8 +163,11 @@ export default function DetalleMovimientoPage({ params }: { params: Promise<{ id
                 <Input 
                     type="text" 
                     value={amount} 
-                    onChange={handleAmountChange} 
+                    onChange={handleChange}
+                    onFocus={handleFocus}
+                    onBlur={handleBlur}
                     className="text-xl font-mono"
+                    placeholder="0,00"
                 />
             </div>
 

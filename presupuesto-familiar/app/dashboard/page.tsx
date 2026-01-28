@@ -1,27 +1,34 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
-import { useRouter } from 'next/navigation' //
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useRouter } from 'next/navigation'
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { ArrowDownRight, ArrowUpRight, ArrowRightLeft, Wallet, Users } from 'lucide-react'
 
-// Utilidad para formatear dinero colombiano (COP)
+// --- 1. FORMATO MONEDA (2 DECIMALES) ---
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('es-CO', {
     style: 'currency',
     currency: 'COP',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(amount)
+}
+
+// --- 2. FORMATO FECHA (SIN RESTAR DÍAS) ---
+const formatDate = (dateString: string) => {
+    if (!dateString) return ''
+    const [year, month, day] = dateString.substring(0, 10).split('-')
+    return `${day}/${month}/${year}`
 }
 
 export default function Dashboard() {
   const supabase = createClient()
+  const router = useRouter()
   const [loading, setLoading] = useState(true)
   
-  // Usamos 'as any[]' para evitar errores de TypeScript
   const [personalData, setPersonalData] = useState({ accounts: [] as any[], transactions: [] as any[] })
   const [sharedData, setSharedData] = useState({ accounts: [] as any[], transactions: [] as any[] })
 
@@ -30,65 +37,89 @@ export default function Dashboard() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    // 1. Cargar SALDOS PERSONALES (Desde la nueva vista account_balances)
-    const { data: pAcc } = await supabase
-      .from('account_balances') // <--- CAMBIO IMPORTANTE: Leemos la vista, no la tabla
-      .select('*')
-      .eq('scope', 'PERSONAL')
-      .eq('user_id', user.id)
+    // Función auxiliar para cargar datos según el ámbito (Personal/Familiar)
+    const loadDataByScope = async (scope: string) => {
+        // A. Cargar Cuentas (Solo Assets/Bancos)
+        let accQuery = supabase.from('accounts').select('*').eq('scope', scope).eq('type', 'ASSET')
+        if (scope === 'PERSONAL') accQuery = accQuery.eq('user_id', user.id)
+        
+        const { data: accountsRaw } = await accQuery
+        const accounts = accountsRaw || []
 
-    const { data: pTx } = await supabase
-      .from('transactions')
-      .select('*, created_by_profile:profiles(email)')
-      .eq('scope', 'PERSONAL')
-      .order('date', { ascending: false })
-      .limit(5)
-    
-    // 2. Cargar SALDOS FAMILIARES (Desde la nueva vista account_balances)
-    const { data: sAcc } = await supabase
-      .from('account_balances') // <--- CAMBIO IMPORTANTE
-      .select('*')
-      .eq('scope', 'SHARED')
+        // B. Calcular Saldo Real sumando líneas
+        const accountsWithBalance = await Promise.all(accounts.map(async (acc) => {
+            const { data: lines } = await supabase
+                .from('transaction_lines')
+                .select('amount')
+                .eq('account_id', acc.id)
+            
+            const balance = lines ? lines.reduce((sum, line) => sum + line.amount, 0) : 0
+            return { ...acc, current_balance: balance }
+        }))
 
-    const { data: sTx } = await supabase
-      .from('transactions')
-      .select('*, created_by_profile:profiles(email)')
-      .eq('scope', 'SHARED')
-      .order('date', { ascending: false })
-      .limit(5)
+        // C. Cargar Últimas Transacciones
+        let txQuery = supabase
+            .from('transactions')
+            .select('*, created_by_profile:profiles(email)')
+            .eq('scope', scope)
+            .order('date', { ascending: false })
+            .limit(10)
+        
+        if (scope === 'PERSONAL') txQuery = txQuery.eq('created_by', user.id)
 
-    setPersonalData({ accounts: pAcc || [], transactions: pTx || [] })
-    setSharedData({ accounts: sAcc || [], transactions: sTx || [] })
+        const { data: transactions } = await txQuery
+
+        return {
+            accounts: accountsWithBalance,
+            transactions: transactions || []
+        }
+    }
+
+    const [pData, sData] = await Promise.all([
+        loadDataByScope('PERSONAL'),
+        loadDataByScope('SHARED')
+    ])
+
+    setPersonalData(pData)
+    setSharedData(sData)
     setLoading(false)
   }
 
   useEffect(() => { fetchData() }, [])
 
-  // Componente de Lista de Cuentas con SALDO REAL
+  // --- LÓGICA DE COLOR (Rojo, Verde, Negro) ---
+  const getBalanceColor = (amount: number) => {
+      if (amount > 0) return 'text-green-600' // Positivo
+      if (amount < 0) return 'text-red-600'   // Negativo
+      return 'text-gray-900'                  // Cero (Negro)
+  }
+
+  // --- COMPONENTE DE CUADRÍCULA DE CUENTAS (Antiguo diseño) ---
   const AccountList = ({ data }: { data: any[] }) => (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      {/* Filtramos solo ACTIVOS (Bancos/Efectivo) */}
-      {data.filter(a => a.type === 'ASSET').map((acc) => (
+      {data.map((acc) => (
         <Card key={acc.id}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">{acc.name}</CardTitle>
-            <div className="text-2xl">{acc.icon}</div>
+            {/* Badge con la sigla */}
+            <div className="flex items-center justify-center w-8 h-8 rounded bg-gray-100 border font-bold text-xs text-gray-700">
+                {acc.icon}
+            </div>
           </CardHeader>
           <CardContent>
-            {/* Aquí mostramos el saldo real que viene de la base de datos */}
-            <div className={`text-2xl font-bold ${acc.current_balance < 0 ? 'text-red-600' : 'text-green-700'}`}>
+            {/* APLICAMOS EL COLOR AQUÍ */}
+            <div className={`text-2xl font-bold ${getBalanceColor(acc.current_balance)}`}>
               {formatCurrency(acc.current_balance)}
             </div>
-            <p className="text-xs text-muted-foreground">Saldo actual</p>
+            <p className="text-xs text-muted-foreground">Saldo disponible</p>
           </CardContent>
         </Card>
       ))}
     </div>
   )
   
-const TransactionList = ({ data }: { data: any[] }) => {
-    const router = useRouter()
-
+  // --- LISTA DE TRANSACCIONES ---
+  const TransactionList = ({ data }: { data: any[] }) => {
     return (
       <Card className="mt-6">
         <CardHeader>
@@ -104,17 +135,16 @@ const TransactionList = ({ data }: { data: any[] }) => {
                 
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    {/* LÓGICA DE ICONOS MEJORADA */}
                     {tx.type === 'INGRESO' && <ArrowUpRight className="h-5 w-5 text-green-600" />}
                     {tx.type === 'GASTO' && <ArrowDownRight className="h-5 w-5 text-red-600" />}
-                    {tx.type === 'APORTE' && <ArrowRightLeft className="h-5 w-5 text-blue-600" />} {/* Icono Azul */}
+                    {tx.type === 'APORTE' && <ArrowRightLeft className="h-5 w-5 text-blue-600" />}
                     
                     <p className="text-sm font-medium leading-none">{tx.description}</p>
                   </div>
                   
                   {tx.notes && <p className="text-xs text-gray-400 italic pl-7 truncate max-w-[200px]">{tx.notes}</p>}
                   <p className="text-xs text-muted-foreground pl-7">
-                    {new Date(tx.date).toLocaleDateString()} • {tx.created_by_profile?.email.split('@')[0]}
+                    {formatDate(tx.date)} • {tx.created_by_profile?.email.split('@')[0]}
                   </p>
                 </div>
                 

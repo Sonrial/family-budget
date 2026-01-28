@@ -18,76 +18,54 @@ function TransactionForm() {
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(false)
   
-  // Datos básicos
   const [description, setDescription] = useState(searchParams.get('desc') || '')
   const [notes, setNotes] = useState('')
   const [amount, setAmount] = useState(searchParams.get('amount') || '') 
   const [type, setType] = useState(searchParams.get('type') || 'GASTO') 
   const [scope, setScope] = useState(searchParams.get('scope') || 'PERSONAL')
   
-  // FECHA
   const [date, setDate] = useState(() => {
     const now = new Date()
     return now.toISOString().split('T')[0] 
   })
   
-  // Lógica de Transferencia
   const [transferMode, setTransferMode] = useState('POOL')
   const [targetUserId, setTargetUserId] = useState('')
   
   const [selectedAsset, setSelectedAsset] = useState('') 
   const [selectedDestination, setSelectedDestination] = useState(searchParams.get('cat') || '')
   
-  // Listas
-  const [originAccounts, setOriginAccounts] = useState<any[]>([]) // Cuentas de Origen     
-  const [destOptions, setDestOptions] = useState<any[]>([])       // Opciones de Destino
+  const [originAccounts, setOriginAccounts] = useState<any[]>([])     
+  const [destOptions, setDestOptions] = useState<any[]>([])       
   const [familyMembers, setFamilyMembers] = useState<any[]>([])
   const [myProfile, setMyProfile] = useState<any>(null) 
 
-  // Carga inicial de usuarios y mi perfil
   useEffect(() => {
     const loadFamily = async () => {
         const { data } = await supabase.from('profiles').select('*')
         if (data) setFamilyMembers(data)
-
         const { data: { user } } = await supabase.auth.getUser()
-        if (user && data) {
-            const me = data.find(p => p.id === user.id)
-            setMyProfile(me)
-        }
+        if (user && data) setMyProfile(data.find(p => p.id === user.id))
     }
     loadFamily()
   }, [])
 
-  // CARGA DE CUENTAS (Con corrección de filtros)
   useEffect(() => {
     const loadAccounts = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // 1. CARGAR CUENTAS DE ORIGEN (Izquierda)
       let queryOrigin = supabase.from('accounts').select('*').eq('type', 'ASSET')
-
       if (type === 'APORTE') {
-        // Si es TRANSFERENCIA, el dinero sale de MI bolsillo (Personal)
         queryOrigin = queryOrigin.eq('user_id', user.id)
       } else {
-        // Si es Gasto/Ingreso normal, respetamos la pestaña (Scope)
-        if (scope === 'PERSONAL') {
-            queryOrigin = queryOrigin.eq('scope', 'PERSONAL').eq('user_id', user.id)
-        } else {
-            // Si es FAMILIAR, mostramos cuentas compartidas (sin importar quién las creó)
-            queryOrigin = queryOrigin.eq('scope', 'SHARED')
-        }
+        if (scope === 'PERSONAL') queryOrigin = queryOrigin.eq('scope', 'PERSONAL').eq('user_id', user.id)
+        else queryOrigin = queryOrigin.eq('scope', 'SHARED')
       }
-      
       const { data: originData } = await queryOrigin
       if (originData) setOriginAccounts(originData)
 
-
-      // 2. CARGAR DESTINOS (Derecha)
       let queryDest = supabase.from('accounts').select('*')
-
       if (type === 'GASTO') {
         queryDest = queryDest.eq('scope', scope)
         if (scope === 'PERSONAL') queryDest = queryDest.eq('user_id', user.id)
@@ -99,30 +77,66 @@ function TransactionForm() {
         queryDest = queryDest.eq('type', 'INCOME')
       } 
       else if (type === 'APORTE') {
-        if (transferMode === 'POOL') {
-            queryDest = queryDest.eq('scope', 'SHARED').eq('type', 'ASSET')
-        } else if (transferMode === 'MEMBER') {
-            if (targetUserId) {
-                queryDest = queryDest.eq('user_id', targetUserId).eq('type', 'ASSET')
-            } else {
-                setDestOptions([])
-                return
-            }
+        if (transferMode === 'POOL') queryDest = queryDest.eq('scope', 'SHARED').eq('type', 'ASSET')
+        else if (transferMode === 'MEMBER') {
+            if (targetUserId) queryDest = queryDest.eq('user_id', targetUserId).eq('type', 'ASSET')
+            else { setDestOptions([]); return }
         }
       }
-
       const { data: destData } = await queryDest
       if (destData) setDestOptions(destData)
     }
     loadAccounts()
   }, [scope, type, transferMode, targetUserId])
 
-  const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const rawValue = e.target.value.replace(/\D/g, '')
-    if (!rawValue) { setAmount(''); return }
-    const formatted = new Intl.NumberFormat('es-CO').format(parseInt(rawValue))
-    setAmount(formatted)
+  // --- LÓGICA DE FORMATO: ESCRIBIR LIBRE -> FORMATO AL SALIR ---
+
+  // 1. Mientras escribes: Solo permitimos caracteres válidos, sin formatear
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Permitimos números, puntos y comas. Nada más.
+    const val = e.target.value.replace(/[^0-9.,]/g, '')
+    setAmount(val)
   }
+
+  // 2. Al entrar (Focus): Quitamos los puntos de mil para facilitar la edición
+  const handleFocus = () => {
+    if (!amount) return
+    // Si dice "58.502,74", lo volvemos "58502,74" para que sea fácil borrar
+    setAmount(amount.replace(/\./g, ''))
+  }
+
+  // 3. Al salir (Blur): Aplicamos la magia del formato
+  const handleBlur = () => {
+    if (!amount) return
+
+    let val = amount
+    // Si el usuario usó punto para decimales (ej: 58502.74), lo cambiamos a coma
+    val = val.replace(/\./g, ',')
+
+    // Separamos enteros y decimales
+    const parts = val.split(',')
+    
+    // Limpiamos la parte entera de cualquier basura
+    const integerPart = parts[0].replace(/\D/g, '')
+    const decimalPart = parts[1]
+
+    if (!integerPart) {
+        setAmount('')
+        return
+    }
+
+    // Formateamos la parte entera con puntos de mil
+    const formattedInt = new Intl.NumberFormat('es-CO').format(BigInt(integerPart))
+
+    // Reconstruimos
+    if (decimalPart !== undefined) {
+        // Cortamos a máximo 2 decimales
+        setAmount(`${formattedInt},${decimalPart.slice(0, 2)}`)
+    } else {
+        setAmount(formattedInt)
+    }
+  }
+  // ---------------------------------------------------------
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -130,7 +144,8 @@ function TransactionForm() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const cleanAmount = amount.replace(/\./g, '')
+    // LIMPIEZA PARA BD: Quitamos puntos, cambiamos coma por punto
+    let cleanAmount = amount.replace(/\./g, '').replace(',', '.')
     const val = parseFloat(cleanAmount)
 
     if (!val || !selectedAsset || !selectedDestination) {
@@ -273,12 +288,19 @@ function TransactionForm() {
             
             <div className="space-y-2">
               <Label>Monto (COP)</Label>
-              <Input type="text" placeholder="0" className="text-lg font-mono" value={amount} onChange={handleAmountChange} />
+              {/* INPUT ACTUALIZADO: onFocus, onChange, onBlur */}
+              <Input 
+                  type="text" 
+                  placeholder="0,00" 
+                  className="text-lg font-mono" 
+                  value={amount} 
+                  onChange={handleChange}
+                  onFocus={handleFocus}
+                  onBlur={handleBlur}
+              />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              
-              {/* --- SELECTOR DE ORIGEN ESTILIZADO (BADGES) --- */}
               <div className="space-y-2">
                 <Label>{type === 'APORTE' ? 'Desde (Tu cuenta)' : 'Cuenta Origen'}</Label>
                 <Select onValueChange={setSelectedAsset} value={selectedAsset}>
@@ -309,7 +331,6 @@ function TransactionForm() {
                 </Select>
               </div>
 
-              {/* --- SELECTOR DE DESTINO ESTILIZADO (BADGES) --- */}
               <div className="space-y-2">
                 <Label>
                     {type === 'APORTE' 
