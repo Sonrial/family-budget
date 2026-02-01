@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { ArrowDownRight, ArrowUpRight, ArrowRightLeft, Wallet, Users } from 'lucide-react'
+import Link from 'next/link' // <--- ¡AQUÍ ESTABA EL FALTANTE!
 
 // --- 1. FORMATO MONEDA (2 DECIMALES) ---
 const formatCurrency = (amount: number) => {
@@ -37,16 +38,15 @@ export default function Dashboard() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    // Función auxiliar para cargar datos según el ámbito (Personal/Familiar)
     const loadDataByScope = async (scope: string) => {
-        // A. Cargar Cuentas (Solo Assets/Bancos)
+        // A. Cargar Cuentas
         let accQuery = supabase.from('accounts').select('*').eq('scope', scope).eq('type', 'ASSET')
         if (scope === 'PERSONAL') accQuery = accQuery.eq('user_id', user.id)
         
         const { data: accountsRaw } = await accQuery
         const accounts = accountsRaw || []
 
-        // B. Calcular Saldo Real sumando líneas
+        // B. Calcular Saldo
         const accountsWithBalance = await Promise.all(accounts.map(async (acc) => {
             const { data: lines } = await supabase
                 .from('transaction_lines')
@@ -57,7 +57,7 @@ export default function Dashboard() {
             return { ...acc, current_balance: balance }
         }))
 
-        // C. Cargar Últimas Transacciones
+        // C. Cargar Últimas Transacciones (Solo 10)
         let txQuery = supabase
             .from('transactions')
             .select('*, created_by_profile:profiles(email)')
@@ -87,27 +87,25 @@ export default function Dashboard() {
 
   useEffect(() => { fetchData() }, [])
 
-  // --- LÓGICA DE COLOR (Rojo, Verde, Negro) ---
+  // --- LÓGICA DE COLOR ---
   const getBalanceColor = (amount: number) => {
-      if (amount > 0) return 'text-green-600' // Positivo
-      if (amount < 0) return 'text-red-600'   // Negativo
-      return 'text-gray-900'                  // Cero (Negro)
+      if (amount > 0) return 'text-green-600' 
+      if (amount < 0) return 'text-red-600'   
+      return 'text-gray-900'                  
   }
 
-  // --- COMPONENTE DE CUADRÍCULA DE CUENTAS (Antiguo diseño) ---
+  // --- LISTA DE CUENTAS ---
   const AccountList = ({ data }: { data: any[] }) => (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       {data.map((acc) => (
         <Card key={acc.id}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">{acc.name}</CardTitle>
-            {/* Badge con la sigla */}
             <div className="flex items-center justify-center w-8 h-8 rounded bg-gray-100 border font-bold text-xs text-gray-700">
                 {acc.icon}
             </div>
           </CardHeader>
           <CardContent>
-            {/* APLICAMOS EL COLOR AQUÍ */}
             <div className={`text-2xl font-bold ${getBalanceColor(acc.current_balance)}`}>
               {formatCurrency(acc.current_balance)}
             </div>
@@ -132,7 +130,6 @@ export default function Dashboard() {
             
             {data.map((tx) => (
               <div key={tx.id} className="flex items-center justify-between border-b pb-2 last:border-0">
-                
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     {tx.type === 'INGRESO' && <ArrowUpRight className="h-5 w-5 text-green-600" />}
@@ -153,10 +150,21 @@ export default function Dashboard() {
                     Ver / Editar
                   </Button>
                 </div>
-
               </div>
             ))}
           </div>
+
+          {/* --- BOTÓN DE VER HISTORIAL CORREGIDO --- */}
+          {data.length > 0 && (
+              <div className="mt-6 pt-4 border-t text-center">
+                  <Link href="/dashboard/movimientos">
+                    <Button variant="ghost" className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 w-full sm:w-auto">
+                        Ver todo el historial histórico →
+                    </Button>
+                  </Link>
+              </div>
+          )}
+
         </CardContent>
       </Card>
     )
