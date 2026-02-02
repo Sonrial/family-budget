@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { PieChart } from 'lucide-react'
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<any>(null)
@@ -30,6 +31,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Link href="/dashboard/transaccion" className="hover:text-blue-200">Nueva Transacción</Link>
           <Link href="/dashboard/obligaciones" className="hover:text-blue-200">Deudas y Pagos</Link>
           <Link href="/dashboard/cuentas" className="hover:text-blue-200">Mis Cuentas</Link>
+          <Link href="/dashboard/reportes" className="hover:text-blue-200">Reportes</Link>
           <button onClick={async () => {
              await supabase.auth.signOut()
              router.push('/')
