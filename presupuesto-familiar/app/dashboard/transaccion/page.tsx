@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowLeft, Users, User, CalendarIcon, Send, Loader2 } from 'lucide-react'
 import Link from 'next/link'
+import AccountSelect from '@/components/AccountSelect'
 
 function TransactionForm() {
   const supabase = createClient()
@@ -255,21 +256,31 @@ function TransactionForm() {
           {/* Cuentas */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
             <div>
-              <label style={labelStyle}>{type === 'APORTE' ? 'Desde (Tu cuenta)' : 'Cuenta origen'}</label>
-              <select value={selectedAsset} onChange={e => setSelectedAsset(e.target.value)} style={inputStyle}>
-                <option value="">Seleccionar...</option>
-                {originAccounts.map((a: any) => <option key={a.id} value={a.id}>{a.icon} {a.name}</option>)}
-              </select>
+              <label style={labelStyle}>
+                {type === 'APORTE' ? 'Desde (Tu cuenta)' : 'Cuenta origen'}
+              </label>
+              <AccountSelect
+                accounts={originAccounts}
+                value={selectedAsset}
+                onChange={setSelectedAsset}
+                placeholder="Seleccionar..."
+                accentColor="#2563eb"
+              />
             </div>
             <div>
               <label style={labelStyle}>
-                {type === 'APORTE' ? (transferMode === 'MEMBER' ? 'Cuenta de él/ella' : 'Cuenta del fondo') : 'Categoría / Destino'}
+                {type === 'APORTE'
+                  ? (transferMode === 'MEMBER' ? 'Cuenta de él/ella' : 'Cuenta del fondo')
+                  : 'Categoría / Destino'}
               </label>
-              <select value={selectedDestination} onChange={e => setSelectedDestination(e.target.value)}
-                disabled={type === 'APORTE' && transferMode === 'MEMBER' && !targetUserId} style={inputStyle}>
-                <option value="">Seleccionar...</option>
-                {destOptions.map((a: any) => <option key={a.id} value={a.id}>{a.icon} {a.name}</option>)}
-              </select>
+              <AccountSelect
+                accounts={destOptions}
+                value={selectedDestination}
+                onChange={setSelectedDestination}
+                placeholder="Seleccionar..."
+                disabled={type === 'APORTE' && transferMode === 'MEMBER' && !targetUserId}
+                accentColor={type === 'GASTO' ? '#dc2626' : type === 'INGRESO' ? '#059669' : '#2563eb'}
+              />
             </div>
           </div>
 
