@@ -7,9 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
-import { ArrowDownRight, ArrowUpRight, ArrowRightLeft, ArrowLeft, Wallet, Users, Loader2, ArrowRight } from 'lucide-react'
-import Link from 'next/link'
-import { formatCurrency, formatDate } from '@/lib/formatters' // Importamos las utilidades
+import { ArrowDownRight, ArrowUpRight, ArrowRightLeft, Wallet, Users, Loader2, ArrowRight } from 'lucide-react'
+import { formatCurrency, formatDate } from '@/lib/formatters'
 
 const generateRecentMonths = () => {
     const months = []
@@ -106,45 +105,45 @@ export default function HistorialPage() {
             const destName = destLine?.account ? `${destLine.account.icon || ''} ${destLine.account.name}` : 'Desconocido'
 
             return (
-                <Card key={tx.id} className="hover:border-primary/50 transition-all overflow-hidden border-border bg-card shadow-md">
+                <Card key={tx.id} className="hover:bg-gray-50 transition-colors bg-white">
                     <CardContent className="p-0">
                         <div className="flex flex-col md:flex-row md:items-center justify-between p-4 gap-4">
                             
                             <div className="space-y-2.5">
                                 <div className="flex items-center gap-2">
-                                    {tx.type === 'INGRESO' && <ArrowUpRight className="h-5 w-5 text-emerald-400" />}
-                                    {tx.type === 'GASTO' && <ArrowDownRight className="h-5 w-5 text-rose-500" />}
-                                    {tx.type === 'APORTE' && <ArrowRightLeft className="h-5 w-5 text-cyan-400" />}
-                                    <p className="font-bold text-foreground text-lg tracking-tight">{tx.description}</p>
+                                    {tx.type === 'INGRESO' && <ArrowUpRight className="h-5 w-5 text-green-600" />}
+                                    {tx.type === 'GASTO' && <ArrowDownRight className="h-5 w-5 text-red-600" />}
+                                    {tx.type === 'APORTE' && <ArrowRightLeft className="h-5 w-5 text-blue-600" />}
+                                    <p className="font-bold text-gray-900 text-lg tracking-tight">{tx.description}</p>
                                 </div>
                                 
                                 <div className="pl-7">
-                                    <div className="inline-flex items-center text-xs font-medium text-muted-foreground bg-secondary px-2 py-1.5 rounded border border-border">
+                                    <div className="inline-flex items-center text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1.5 rounded border border-gray-200">
                                         <span className="truncate max-w-[120px] sm:max-w-[200px]">{originName}</span> 
-                                        <ArrowRight className="w-3 h-3 mx-2 text-muted-foreground shrink-0" /> 
+                                        <ArrowRight className="w-3 h-3 mx-2 text-gray-400 shrink-0" /> 
                                         <span className="truncate max-w-[120px] sm:max-w-[200px]">{destName}</span>
                                     </div>
                                 </div>
 
-                                <div className="flex flex-col sm:flex-row sm:gap-4 pl-7 text-xs text-muted-foreground">
+                                <div className="flex flex-col sm:flex-row sm:gap-4 pl-7 text-xs text-gray-500">
                                     <span className="flex items-center gap-1">📅 {formatDate(tx.date)}</span>
                                     <span className="flex items-center gap-1 mt-1 sm:mt-0">👤 {tx.created_by_profile?.email.split('@')[0]}</span>
                                 </div>
                                 
                                 {tx.notes && (
-                                    <p className="text-xs text-muted-foreground italic pl-7 truncate max-w-[300px] border-l-2 border-border ml-[29px] pl-2">
+                                    <p className="text-xs text-gray-500 italic pl-7 truncate max-w-[300px] border-l-2 border-gray-300 ml-[29px] pl-2">
                                         "{tx.notes}"
                                     </p>
                                 )}
                             </div>
 
-                            <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center pl-7 md:pl-0 border-t border-border md:border-t-0 pt-3 md:pt-0 mt-2 md:mt-0 gap-3">
-                                <div className={`font-black text-xl md:text-right tracking-tight ${tx.type === 'GASTO' ? 'text-rose-500' : tx.type === 'INGRESO' ? 'text-emerald-400' : 'text-cyan-400'}`}>
+                            <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center pl-7 md:pl-0 border-t md:border-t-0 pt-3 md:pt-0 mt-2 md:mt-0 gap-3">
+                                <div className={`font-black text-xl md:text-right tracking-tight ${tx.type === 'GASTO' ? 'text-red-600' : tx.type === 'INGRESO' ? 'text-green-600' : 'text-blue-600'}`}>
                                     {tx.type === 'GASTO' ? '-' : (tx.type === 'INGRESO' ? '+' : '')} {formatCurrency(rawAmount)}
                                 </div>
                                 
-                                <Button variant="secondary" size="sm" className="h-8 shadow-sm hover:bg-primary hover:text-primary-foreground transition-colors" onClick={() => router.push(`/dashboard/movimiento/${tx.id}`)}>
-                                    Modificar
+                                <Button variant="outline" size="sm" className="h-8 shadow-sm hover:bg-gray-100" onClick={() => router.push(`/dashboard/movimiento/${tx.id}`)}>
+                                    Ver / Editar
                                 </Button>
                             </div>
                         </div>
@@ -155,43 +154,40 @@ export default function HistorialPage() {
 
         {hasMore && (
             <div className="flex justify-center pt-4">
-                <Button variant="outline" onClick={handleLoadMore} disabled={loadingMore} className="text-primary hover:text-primary-foreground hover:bg-primary border-primary/50 w-full sm:w-auto transition-all">
+                <Button variant="outline" onClick={handleLoadMore} disabled={loadingMore} className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 w-full sm:w-auto">
                     {loadingMore ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : '⬇ Cargar movimientos anteriores'}
                 </Button>
             </div>
         )}
         
-        {!hasMore && transactions.length > 0 && <p className="text-center text-xs text-muted-foreground pt-6 pb-4">Has llegado al final del historial.</p>}
+        {!hasMore && transactions.length > 0 && <p className="text-center text-xs text-gray-500 pt-6 pb-4">Has llegado al final del historial.</p>}
     </div>
   )
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto py-6 pb-20">
       
-      <div className="flex items-center gap-4">
-        <Link href="/dashboard">
-            <Button variant="outline" size="icon" className="shrink-0 border-border text-foreground hover:bg-secondary"><ArrowLeft className="h-4 w-4"/></Button>
-        </Link>
+      <div className="flex items-center justify-between">
         <div>
-            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground">Historial Detallado</h2>
-            <p className="text-sm text-muted-foreground">Encuentra y modifica cualquier movimiento.</p>
+            <h2 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">Historial Detallado</h2>
+            <p className="text-sm text-gray-500">Encuentra y modifica cualquier movimiento.</p>
         </div>
       </div>
 
       <Tabs defaultValue="PERSONAL" onValueChange={setScope} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-2 max-w-[400px] bg-secondary border border-border">
-          <TabsTrigger value="PERSONAL" className="flex gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><Wallet className="w-4 h-4"/> Personal</TabsTrigger>
-          <TabsTrigger value="SHARED" className="flex gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"><Users className="w-4 h-4"/> Familiar</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 max-w-[400px]">
+          <TabsTrigger value="PERSONAL" className="flex gap-2"><Wallet className="w-4 h-4"/> Personal</TabsTrigger>
+          <TabsTrigger value="SHARED" className="flex gap-2"><Users className="w-4 h-4"/> Familiar</TabsTrigger>
         </TabsList>
         
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-card p-4 rounded-xl border border-border shadow-lg">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
             <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Filtrar por Mes</Label>
+                <Label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Filtrar por Mes</Label>
                 <Select value={monthFilter} onValueChange={setMonthFilter}>
-                    <SelectTrigger className="bg-secondary border-border text-foreground hover:bg-secondary/80 transition-colors">
+                    <SelectTrigger className="bg-gray-50/50 hover:bg-gray-100 transition-colors">
                         <SelectValue placeholder="Seleccionar mes" />
                     </SelectTrigger>
-                    <SelectContent className="bg-card border-border">
+                    <SelectContent>
                         <SelectItem value="ALL">🗓️ Todos los meses</SelectItem>
                         {availableMonths.map((m) => (
                             <SelectItem key={m.value} value={m.value}>{m.name}</SelectItem>
@@ -201,12 +197,12 @@ export default function HistorialPage() {
             </div>
             
             <div className="space-y-1.5">
-                <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Filtrar por Tipo</Label>
+                <Label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Filtrar por Tipo</Label>
                 <Select value={typeFilter} onValueChange={setTypeFilter}>
-                    <SelectTrigger className="bg-secondary border-border text-foreground hover:bg-secondary/80 transition-colors">
+                    <SelectTrigger className="bg-gray-50/50 hover:bg-gray-100 transition-colors">
                         <SelectValue placeholder="Todos los tipos" />
                     </SelectTrigger>
-                    <SelectContent className="bg-card border-border">
+                    <SelectContent>
                         <SelectItem value="ALL">📁 Todos los movimientos</SelectItem>
                         <SelectItem value="GASTO">📉 Solo Gastos</SelectItem>
                         <SelectItem value="INGRESO">📈 Solo Ingresos</SelectItem>
@@ -217,13 +213,13 @@ export default function HistorialPage() {
         </div>
 
         <TabsContent value="PERSONAL" className="space-y-4">
-            {loading ? <div className="py-20 flex flex-col items-center text-primary"><Loader2 className="w-8 h-8 animate-spin mb-4"/> Buscando...</div> : <TransactionList />}
-            {!loading && transactions.length === 0 && <div className="py-20 text-center bg-card rounded-xl border border-dashed border-border text-muted-foreground">No se encontraron movimientos. 🕵️‍♂️</div>}
+            {loading ? <div className="py-20 flex flex-col items-center text-blue-500"><Loader2 className="w-8 h-8 animate-spin mb-4"/> Buscando...</div> : <TransactionList />}
+            {!loading && transactions.length === 0 && <div className="py-20 text-center bg-white rounded-xl border border-dashed border-gray-300 text-gray-500">No se encontraron movimientos. 🕵️‍♂️</div>}
         </TabsContent>
         
         <TabsContent value="SHARED" className="space-y-4">
-            {loading ? <div className="py-20 flex flex-col items-center text-primary"><Loader2 className="w-8 h-8 animate-spin mb-4"/> Buscando...</div> : <TransactionList />}
-            {!loading && transactions.length === 0 && <div className="py-20 text-center bg-card rounded-xl border border-dashed border-border text-muted-foreground">No se encontraron movimientos. 🕵️‍♂️</div>}
+            {loading ? <div className="py-20 flex flex-col items-center text-blue-500"><Loader2 className="w-8 h-8 animate-spin mb-4"/> Buscando...</div> : <TransactionList />}
+            {!loading && transactions.length === 0 && <div className="py-20 text-center bg-white rounded-xl border border-dashed border-gray-300 text-gray-500">No se encontraron movimientos. 🕵️‍♂️</div>}
         </TabsContent>
       </Tabs>
     </div>
