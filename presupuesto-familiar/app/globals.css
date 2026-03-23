@@ -3,24 +3,23 @@
 @tailwind utilities;
 
 @layer base {
-  /* Al ponerlo en :root, forzamos este tema elegante en toda la app */
   :root, .dark {
-    /* Fondo principal: Un azul/pizarra casi negro (Slate 950) */
+    /* Fondo principal: Azul/pizarra casi negro profundo */
     --background: 222 47% 4%; 
     --foreground: 210 40% 98%;
 
-    /* Tarjetas: Un tono ligeramente más claro para hacer contraste (Slate 900) */
+    /* Tarjetas: Un tono ligeramente más claro para contraste */
     --card: 222 47% 8%;
     --card-foreground: 210 40% 98%;
 
     --popover: 222 47% 8%;
     --popover-foreground: 210 40% 98%;
 
-    /* El color primario: Cyan eléctrico / Azul neón para botones */
+    /* Color primario: Cyan eléctrico / Azul neón para botones */
     --primary: 199 89% 48%;
     --primary-foreground: 222 47% 4%;
 
-    /* Elementos secundarios y bordes */
+    /* Secundarios y bordes */
     --secondary: 217 32% 17%;
     --secondary-foreground: 210 40% 98%;
 
@@ -30,7 +29,7 @@
     --accent: 217 32% 17%;
     --accent-foreground: 210 40% 98%;
 
-    /* Rojo para gastos y eliminar (suavizado para no cansar la vista) */
+    /* Rojo para gastos (suavizado para no cansar la vista) */
     --destructive: 0 62% 40%;
     --destructive-foreground: 210 40% 98%;
 
@@ -38,15 +37,18 @@
     --input: 217 32% 17%;
     --ring: 199 89% 48%;
 
-    --radius: 0.75rem; /* Bordes más redondeados y modernos */
+    --radius: 0.75rem; 
   }
 }
 
 @layer base {
+  /* ¡ESTA ES LA CORRECCIÓN EXACTA PARA EL ERROR DE VERCEL! 
+     Usamos CSS puro en lugar de @apply border-border */
   * {
-    @apply border-border;
+    border-color: hsl(var(--border));
   }
   body {
-    @apply bg-background text-foreground;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
   }
 }

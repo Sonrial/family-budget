@@ -6,7 +6,7 @@ export async function middleware(request: NextRequest) {
     request: { headers: request.headers },
   })
 
-  // Creamos el cliente de Supabase específico para el Middleware
+  // Creamos el cliente de Supabase para interceptar la sesión
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -35,12 +35,12 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // 1. Proteger rutas privadas: Si no hay usuario y va al dashboard -> Login
+  // 1. Proteger dashboard: Si no hay usuario -> Login
   if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // 2. Proteger rutas públicas: Si hay usuario y va al login o raíz -> Dashboard
+  // 2. Si ya está logueado y va al login o la raíz -> Dashboard
   if (user && (request.nextUrl.pathname === '/login' || request.nextUrl.pathname === '/')) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
@@ -48,7 +48,7 @@ export async function middleware(request: NextRequest) {
   return response
 }
 
-// Especificamos en qué rutas debe ejecutarse este middleware
+// Rutas donde actúa el middleware (ignoramos estáticos e imágenes)
 export const config = {
   matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }

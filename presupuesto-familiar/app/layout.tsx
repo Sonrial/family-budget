@@ -6,7 +6,7 @@ import "./globals.css"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Finanzas Familiares",
+  title: "Finanzas Familiares | Synergy",
   description: "Sistema avanzado de control financiero.",
 }
 
@@ -15,7 +15,7 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode
 }>) {
-  // className="dark" es el interruptor maestro que activa tus nuevos colores
+  // className="dark" activa nuestra nueva paleta oscura
   return (
     <html lang="es" className="dark">
       <body className={`${inter.className} antialiased`}>

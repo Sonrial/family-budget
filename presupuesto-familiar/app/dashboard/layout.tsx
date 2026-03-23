@@ -27,7 +27,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     router.push('/login')
   }
 
-  // Lista de navegación centralizada
   const navItems = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Nueva Transacción', href: '/dashboard/transaccion', icon: PlusCircle },
@@ -131,7 +130,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         )}
 
-        {/* Contenedor donde se cargan todas las páginas (Dashboard, Reportes, etc.) */}
         <main className="flex-1 overflow-y-auto bg-background p-4 md:p-8 scroll-smooth">
           <div className="max-w-6xl mx-auto">
             {children}
