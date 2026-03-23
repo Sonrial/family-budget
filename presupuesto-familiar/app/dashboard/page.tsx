@@ -2,17 +2,15 @@
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Button } from '@/components/ui/button'
-import { ArrowDownRight, ArrowUpRight, ArrowRightLeft, Wallet, Users, TrendingUp, Loader2, PlusCircle } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, ArrowRightLeft, Wallet, Users, TrendingUp, Loader2, PlusCircle, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { formatCurrency, formatDate } from '@/lib/formatters'
 
 export default function Dashboard() {
   const supabase = createClient()
   const router   = useRouter()
-  const [loading, setLoading]       = useState(true)
+  const [loading, setLoading]           = useState(true)
+  const [activeTab, setActiveTab]       = useState<'personal' | 'shared'>('personal')
   const [personalData, setPersonalData] = useState({ accounts: [] as any[], transactions: [] as any[] })
   const [sharedData,   setSharedData]   = useState({ accounts: [] as any[], transactions: [] as any[] })
 
@@ -42,7 +40,6 @@ export default function Dashboard() {
         .limit(8)
       if (scope === 'PERSONAL') txQuery = txQuery.eq('created_by', user.id)
       const { data: transactions } = await txQuery
-
       return { accounts: accountsWithBalance, transactions: transactions || [] }
     }
 
@@ -57,216 +54,247 @@ export default function Dashboard() {
 
   useEffect(() => { fetchData() }, [])
 
-  /* ─────────────────────────────────────────
-     TARJETAS DE CUENTAS
-  ───────────────────────────────────────── */
-  const AccountList = ({ data }: { data: any[] }) => {
-    const total = data.reduce((s, a) => s + (a.current_balance ?? 0), 0)
+  const data = activeTab === 'personal' ? personalData : sharedData
+  const total = data.accounts.reduce((s, a) => s + (a.current_balance ?? 0), 0)
 
-    return (
-      <div className="space-y-4">
-
-        {/* ── Hero: Patrimonio total ── */}
-        <div style={{ background: 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 60%, #1e40af 100%)' }}
-          className="rounded-2xl p-6 text-white shadow-xl">
-          <div className="flex items-center gap-2 mb-2">
-            <TrendingUp className="w-4 h-4 opacity-80" />
-            <span className="text-sm font-semibold opacity-80">Patrimonio Total</span>
-          </div>
-          <p className="text-4xl font-black tracking-tight leading-none">
-            {formatCurrency(total)}
-          </p>
-          <p className="text-blue-200 text-xs mt-2">
-            {data.length} cuenta{data.length !== 1 ? 's' : ''} activa{data.length !== 1 ? 's' : ''}
-          </p>
-        </div>
-
-        {/* ── Grid de cuentas individuales ── */}
-        {data.length === 0 ? (
-          <p className="text-sm text-slate-400 text-center py-6">
-            No tienes cuentas registradas aún.
-          </p>
-        ) : (
-          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-            {data.map((acc) => {
-              const isPositive = acc.current_balance >= 0
-              return (
-                <div key={acc.id}
-                  className="bg-white rounded-2xl border border-slate-200 p-4 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200">
-                  {/* Fila superior: icono + badge */}
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-sm text-slate-600">
-                      {acc.icon}
-                    </div>
-                    {isPositive ? (
-                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        ↑ positivo
-                      </span>
-                    ) : (
-                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-50 text-red-700 border border-red-200">
-                        ↓ negativo
-                      </span>
-                    )}
-                  </div>
-                  {/* Nombre */}
-                  <p className="text-sm font-semibold text-slate-500 mb-1">{acc.name}</p>
-                  {/* Saldo */}
-                  {isPositive ? (
-                    <p className="text-xl font-extrabold text-slate-900 tracking-tight">
-                      {formatCurrency(acc.current_balance)}
-                    </p>
-                  ) : (
-                    <p className="text-xl font-extrabold text-red-600 tracking-tight">
-                      {formatCurrency(acc.current_balance)}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  /* ─────────────────────────────────────────
-     LISTA DE TRANSACCIONES RECIENTES
-  ───────────────────────────────────────── */
-  const TransactionList = ({ data }: { data: any[] }) => (
-    <Card className="bg-white border-slate-200 shadow-sm">
-      <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-base font-bold text-slate-800">Últimos Movimientos</CardTitle>
-            <CardDescription className="text-xs">
-              {data.length} transacciones más recientes
-            </CardDescription>
-          </div>
-          <Link href="/dashboard/movimientos">
-            <Button variant="outline" size="sm"
-              className="text-xs text-blue-600 border-blue-200 hover:bg-blue-50 hover:border-blue-300 font-semibold">
-              Ver todo →
-            </Button>
-          </Link>
-        </div>
-      </CardHeader>
-
-      <CardContent className="pt-2">
-        {data.length === 0 ? (
-          <p className="text-sm text-slate-400 text-center py-10">
-            No hay movimientos registrados aún.
-          </p>
-        ) : (
-          <div>
-            {data.map((tx, i) => (
-              <div key={tx.id}
-                className={`flex items-center gap-3 py-3 ${i < data.length - 1 ? 'border-b border-slate-100' : ''}`}>
-
-                {/* Icono tipo transacción */}
-                {tx.type === 'INGRESO' && (
-                  <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center shrink-0">
-                    <ArrowUpRight className="w-4 h-4 text-emerald-600" />
-                  </div>
-                )}
-                {tx.type === 'GASTO' && (
-                  <div className="w-9 h-9 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
-                    <ArrowDownRight className="w-4 h-4 text-red-500" />
-                  </div>
-                )}
-                {tx.type === 'APORTE' && (
-                  <div className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0">
-                    <ArrowRightLeft className="w-4 h-4 text-blue-500" />
-                  </div>
-                )}
-
-                {/* Descripción + fecha */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-800 truncate leading-snug">
-                    {tx.description}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {formatDate(tx.date)} · {tx.created_by_profile?.email?.split('@')[0]}
-                  </p>
-                </div>
-
-                {/* Botón editar */}
-                <button
-                  onClick={() => router.push(`/dashboard/movimiento/${tx.id}`)}
-                  className="text-xs font-semibold text-slate-400 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors shrink-0">
-                  Editar
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  )
-
-  /* ── Loading ── */
-  const LoadingState = () => (
-    <div className="flex flex-col items-center justify-center py-24 gap-3 text-slate-400">
-      <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-      <span className="text-sm">Calculando saldos...</span>
-    </div>
-  )
-
-  /* ─────────────────────────────────────────
-     RENDER PRINCIPAL
-  ───────────────────────────────────────── */
   return (
-    <div className="space-y-6">
+    <div style={{ fontFamily: 'inherit' }}>
 
-      {/* Encabezado */}
-      <div className="flex items-start justify-between">
+      {/* ══════════ ENCABEZADO ══════════ */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '24px' }}>
         <div>
-          <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900">
+          <h2 style={{ fontSize: '28px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.5px' }}>
             Resumen
           </h2>
-          <p className="text-slate-400 text-sm mt-0.5">Vista general de tus finanzas</p>
+          <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '2px' }}>
+            Vista general de tus finanzas
+          </p>
         </div>
         <Link href="/dashboard/transaccion">
-          <button className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white text-sm font-bold px-4 py-2.5 rounded-xl shadow-sm transition-colors">
-            <PlusCircle className="w-4 h-4" /> Nueva
+          <button style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            background: '#2563eb', color: 'white',
+            border: 'none', borderRadius: '12px',
+            padding: '10px 18px', fontSize: '13px', fontWeight: 700,
+            cursor: 'pointer', boxShadow: '0 4px 12px rgba(37,99,235,0.35)',
+            transition: 'all 0.15s'
+          }}>
+            <PlusCircle size={15} /> Nueva transacción
           </button>
         </Link>
       </div>
 
-      {/* Tabs Personal / Familiar */}
-      <Tabs defaultValue="personal" className="space-y-5">
-        <TabsList className="bg-slate-100 p-1 rounded-xl h-auto">
-          <TabsTrigger value="personal"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold
-              data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm
-              data-[state=inactive]:text-slate-500">
-            <Wallet className="w-4 h-4" /> Personal
-          </TabsTrigger>
-          <TabsTrigger value="shared"
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold
-              data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm
-              data-[state=inactive]:text-slate-500">
-            <Users className="w-4 h-4" /> Familiar
-          </TabsTrigger>
-        </TabsList>
+      {/* ══════════ TABS ══════════ */}
+      <div style={{
+        display: 'inline-flex', gap: '4px',
+        background: '#f1f5f9', borderRadius: '12px', padding: '4px',
+        marginBottom: '24px'
+      }}>
+        {(['personal', 'shared'] as const).map((tab) => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{
+            display: 'flex', alignItems: 'center', gap: '7px',
+            padding: '8px 20px', borderRadius: '9px',
+            border: 'none', cursor: 'pointer', fontSize: '13px', fontWeight: 600,
+            transition: 'all 0.15s',
+            background: activeTab === tab ? 'white' : 'transparent',
+            color: activeTab === tab ? '#2563eb' : '#64748b',
+            boxShadow: activeTab === tab ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
+          }}>
+            {tab === 'personal' ? <Wallet size={14} /> : <Users size={14} />}
+            {tab === 'personal' ? 'Personal' : 'Familiar'}
+          </button>
+        ))}
+      </div>
 
-        <TabsContent value="personal" className="space-y-4 mt-0">
-          {loading ? <LoadingState /> : (
-            <>
-              <AccountList data={personalData.accounts} />
-              <TransactionList data={personalData.transactions} />
-            </>
-          )}
-        </TabsContent>
+      {/* ══════════ CONTENIDO ══════════ */}
+      {loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '80px 0', gap: '12px', color: '#94a3b8' }}>
+          <Loader2 size={32} style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} />
+          <span style={{ fontSize: '13px' }}>Calculando saldos...</span>
+        </div>
+      ) : (
+        <>
+          {/* ── HERO PATRIMONIO ── */}
+          <div style={{
+            background: 'linear-gradient(135deg, #1e3a8a 0%, #2563eb 50%, #3b82f6 100%)',
+            borderRadius: '20px', padding: '28px 32px', marginBottom: '20px',
+            boxShadow: '0 8px 32px rgba(37,99,235,0.25)',
+            position: 'relative', overflow: 'hidden'
+          }}>
+            {/* Círculos decorativos */}
+            <div style={{
+              position: 'absolute', top: '-40px', right: '-40px',
+              width: '180px', height: '180px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.06)'
+            }} />
+            <div style={{
+              position: 'absolute', bottom: '-60px', right: '80px',
+              width: '140px', height: '140px', borderRadius: '50%',
+              background: 'rgba(255,255,255,0.04)'
+            }} />
+            <div style={{ position: 'relative', zIndex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                <TrendingUp size={14} style={{ color: 'rgba(255,255,255,0.7)' }} />
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                  {activeTab === 'personal' ? 'Patrimonio Personal' : 'Fondo Familiar'}
+                </span>
+              </div>
+              <p style={{ fontSize: '38px', fontWeight: 900, color: 'white', margin: 0, letterSpacing: '-1px', lineHeight: 1.1 }}>
+                {formatCurrency(total)}
+              </p>
+              <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.55)', marginTop: '8px' }}>
+                {data.accounts.length} cuenta{data.accounts.length !== 1 ? 's' : ''} · actualizado ahora
+              </p>
+            </div>
+          </div>
 
-        <TabsContent value="shared" className="space-y-4 mt-0">
-          {loading ? <LoadingState /> : (
-            <>
-              <AccountList data={sharedData.accounts} />
-              <TransactionList data={sharedData.transactions} />
-            </>
-          )}
-        </TabsContent>
-      </Tabs>
+          {/* ── GRID DE CUENTAS ── */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gap: '12px',
+            marginBottom: '24px'
+          }}>
+            {data.accounts.map((acc) => {
+              const pos = acc.current_balance >= 0
+              return (
+                <div key={acc.id} style={{
+                  background: 'white',
+                  borderRadius: '16px',
+                  border: '1px solid #e2e8f0',
+                  padding: '18px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                  transition: 'all 0.2s',
+                  cursor: 'default'
+                }}>
+                  {/* Fila superior: icono + badge */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+                    <div style={{
+                      width: '40px', height: '40px', borderRadius: '10px',
+                      background: '#f8fafc', border: '1px solid #e2e8f0',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '13px', fontWeight: 700, color: '#475569'
+                    }}>
+                      {acc.icon}
+                    </div>
+                    <span style={{
+                      fontSize: '10px', fontWeight: 700, padding: '3px 9px', borderRadius: '99px',
+                      background: pos ? '#ecfdf5' : '#fef2f2',
+                      color: pos ? '#059669' : '#dc2626',
+                      border: `1px solid ${pos ? '#a7f3d0' : '#fecaca'}`
+                    }}>
+                      {pos ? '↑ positivo' : '↓ negativo'}
+                    </span>
+                  </div>
+                  {/* Nombre */}
+                  <p style={{ fontSize: '12px', fontWeight: 600, color: '#64748b', margin: '0 0 4px 0' }}>
+                    {acc.name}
+                  </p>
+                  {/* Saldo */}
+                  <p style={{
+                    fontSize: '20px', fontWeight: 800, margin: 0, letterSpacing: '-0.5px',
+                    color: pos ? '#0f172a' : '#dc2626'
+                  }}>
+                    {formatCurrency(acc.current_balance)}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* ── TRANSACCIONES RECIENTES ── */}
+          <div style={{
+            background: 'white', borderRadius: '20px',
+            border: '1px solid #e2e8f0',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            overflow: 'hidden'
+          }}>
+            {/* Header tabla */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '20px 24px 16px',
+              borderBottom: '1px solid #f1f5f9'
+            }}>
+              <div>
+                <p style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+                  Últimos movimientos
+                </p>
+                <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
+                  {data.transactions.length} transacciones recientes
+                </p>
+              </div>
+              <Link href="/dashboard/movimientos">
+                <button style={{
+                  display: 'flex', alignItems: 'center', gap: '4px',
+                  background: '#eff6ff', color: '#2563eb',
+                  border: '1px solid #bfdbfe', borderRadius: '8px',
+                  padding: '7px 14px', fontSize: '12px', fontWeight: 600,
+                  cursor: 'pointer'
+                }}>
+                  Ver historial <ChevronRight size={13} />
+                </button>
+              </Link>
+            </div>
+
+            {/* Lista */}
+            {data.transactions.length === 0 ? (
+              <div style={{ padding: '48px 24px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
+                No hay movimientos registrados aún.
+              </div>
+            ) : (
+              <div>
+                {data.transactions.map((tx, i) => {
+                  const isLast = i === data.transactions.length - 1
+                  const iconBg  = tx.type === 'INGRESO' ? '#ecfdf5' : tx.type === 'GASTO' ? '#fef2f2' : '#eff6ff'
+                  const iconClr = tx.type === 'INGRESO' ? '#059669' : tx.type === 'GASTO' ? '#dc2626' : '#2563eb'
+
+                  return (
+                    <div key={tx.id} style={{
+                      display: 'flex', alignItems: 'center', gap: '14px',
+                      padding: '14px 24px',
+                      borderBottom: isLast ? 'none' : '1px solid #f8fafc',
+                      transition: 'background 0.1s'
+                    }}>
+                      {/* Icono */}
+                      <div style={{
+                        width: '38px', height: '38px', borderRadius: '10px',
+                        background: iconBg, display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', flexShrink: 0
+                      }}>
+                        {tx.type === 'INGRESO' && <ArrowUpRight   size={16} style={{ color: iconClr }} />}
+                        {tx.type === 'GASTO'   && <ArrowDownRight  size={16} style={{ color: iconClr }} />}
+                        {tx.type === 'APORTE'  && <ArrowRightLeft  size={16} style={{ color: iconClr }} />}
+                      </div>
+
+                      {/* Info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {tx.description}
+                        </p>
+                        <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+                          {formatDate(tx.date)} · {tx.created_by_profile?.email?.split('@')[0]}
+                        </p>
+                      </div>
+
+                      {/* Botón editar */}
+                      <button
+                        onClick={() => router.push(`/dashboard/movimiento/${tx.id}`)}
+                        style={{
+                          fontSize: '11px', fontWeight: 600, color: '#94a3b8',
+                          background: 'transparent', border: '1px solid #e2e8f0',
+                          borderRadius: '7px', padding: '5px 12px', cursor: 'pointer',
+                          flexShrink: 0, transition: 'all 0.15s'
+                        }}>
+                        Editar
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }
