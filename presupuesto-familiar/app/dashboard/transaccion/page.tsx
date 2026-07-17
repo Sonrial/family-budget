@@ -1,346 +1,264 @@
 'use client'
-import { useState, useEffect, Suspense } from 'react'
-import { createClient } from '@/lib/supabase'
+
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, Users, User, CalendarIcon, Send, Loader2 } from 'lucide-react'
-import Link from 'next/link'
-import AccountSelect from '@/components/AccountSelect'
+import { ArrowDownRight, ArrowRightLeft, ArrowUpRight, Loader2, Send } from 'lucide-react'
+import { toast } from 'sonner'
+import AccountSelect, { type AccountOption } from '@/components/AccountSelect'
+import { PageHeader } from '@/components/finance/page-header'
+import { ScopeToggle } from '@/components/finance/scope-toggle'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import { getFinanceContext, getFinanceErrorMessage, postTransaction } from '@/lib/finance'
+import {
+  formatCurrencyInput, getLocalDateInputValue,
+  getLocalMonthInputValue, parseCurrencyInput,
+} from '@/lib/formatters'
+import { getBrowserClient } from '@/lib/supabase/client'
+import type { Account, FinanceContext, Profile, ScopeType, TransactionType } from '@/lib/types'
+
+type TransferMode = 'POOL' | 'MEMBER'
+
+const transactionTypes = [
+  { value: 'GASTO' as const, label: 'Gasto', description: 'Salida de dinero', icon: ArrowDownRight },
+  { value: 'INGRESO' as const, label: 'Ingreso', description: 'Entrada de dinero', icon: ArrowUpRight },
+  { value: 'APORTE' as const, label: 'Transferencia', description: 'Entre cuentas u hogar', icon: ArrowRightLeft },
+]
 
 function TransactionForm() {
-  const supabase = createClient()
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [loading, setLoading] = useState(false)
-
-  const [description, setDescription] = useState(searchParams.get('desc') || '')
-  const [notes, setNotes]             = useState('')
-  const [amount, setAmount]           = useState(searchParams.get('amount') || '')
-  const [type, setType]               = useState(searchParams.get('type') || 'GASTO')
-  const [scope, setScope]             = useState(searchParams.get('scope') || 'PERSONAL')
-  const [date, setDate]               = useState(() => new Date().toISOString().split('T')[0])
-  const [transferMode, setTransferMode]     = useState('POOL')
-  const [targetUserId, setTargetUserId]     = useState('')
-  const [selectedAsset, setSelectedAsset]   = useState('')
-  const [selectedDestination, setSelectedDestination] = useState(searchParams.get('cat') || '')
-  const [originAccounts, setOriginAccounts] = useState<any[]>([])
-  const [destOptions, setDestOptions]       = useState<any[]>([])
-  const [familyMembers, setFamilyMembers]   = useState<any[]>([])
-  const [myProfile, setMyProfile]           = useState<any>(null)
+  const initialType = (searchParams.get('type') as TransactionType | null) ?? 'GASTO'
+  const initialScope = (searchParams.get('scope') as ScopeType | null) ?? 'PERSONAL'
+  const [context, setContext] = useState<FinanceContext | null>(null)
+  const [description, setDescription] = useState(searchParams.get('desc') ?? '')
+  const [notes, setNotes] = useState('')
+  const [amount, setAmount] = useState(searchParams.get('amount') ?? '')
+  const [type, setType] = useState<TransactionType>(initialType)
+  const [scope, setScope] = useState<ScopeType>(initialScope)
+  const [date, setDate] = useState(getLocalDateInputValue)
+  const [transferMode, setTransferMode] = useState<TransferMode>('POOL')
+  const [targetUserId, setTargetUserId] = useState('')
+  const [selectedAsset, setSelectedAsset] = useState('')
+  const [selectedDestination, setSelectedDestination] = useState(searchParams.get('cat') ?? '')
+  const [originAccounts, setOriginAccounts] = useState<AccountOption[]>([])
+  const [destinationAccounts, setDestinationAccounts] = useState<AccountOption[]>([])
+  const [familyMembers, setFamilyMembers] = useState<Profile[]>([])
+  const [loadingAccounts, setLoadingAccounts] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    const loadFamily = async () => {
-      const { data } = await supabase.from('profiles').select('*')
-      if (data) setFamilyMembers(data)
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user && data) setMyProfile(data.find((p: any) => p.id === user.id))
+    let cancelled = false
+    async function loadContext() {
+      try {
+        const client = getBrowserClient()
+        const nextContext = await getFinanceContext(client)
+        const { data, error } = await client.rpc('get_family_profiles')
+        if (error) throw error
+        if (!cancelled) {
+          setContext(nextContext)
+          setFamilyMembers((data as Profile[] | null) ?? [])
+        }
+      } catch (error) {
+        if (!cancelled) toast.error(getFinanceErrorMessage(error))
+      }
     }
-    loadFamily()
+    void loadContext()
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
-    const loadAccounts = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      let queryOrigin = supabase.from('accounts').select('*').eq('type', 'ASSET')
-      if (type === 'APORTE') queryOrigin = queryOrigin.eq('user_id', user.id)
-      else if (scope === 'PERSONAL') queryOrigin = queryOrigin.eq('scope', 'PERSONAL').eq('user_id', user.id)
-      else queryOrigin = queryOrigin.eq('scope', 'SHARED')
-      const { data: originData } = await queryOrigin
-      if (originData) setOriginAccounts(originData)
+    if (!context) return
+    const financeContext = context
+    let cancelled = false
+    async function loadAccounts() {
+      try {
+        const client = getBrowserClient()
+        if ((scope === 'SHARED' || type === 'APORTE') && !financeContext.householdId) {
+          if (!cancelled) {
+            setOriginAccounts([])
+            setDestinationAccounts([])
+            setLoadingAccounts(false)
+          }
+          return
+        }
+        let originQuery = client.from('accounts').select('*').eq('type', 'ASSET').is('archived_at', null)
+        if (type === 'APORTE' || scope === 'PERSONAL') {
+          originQuery = originQuery.eq('scope', 'PERSONAL').eq('user_id', financeContext.userId)
+        } else {
+          originQuery = originQuery.eq('scope', 'SHARED').eq('household_id', financeContext.householdId)
+        }
 
-      let queryDest = supabase.from('accounts').select('*')
-      if (type === 'GASTO') {
-        queryDest = queryDest.eq('scope', scope).in('type', ['EXPENSE', 'LIABILITY'])
-        if (scope === 'PERSONAL') queryDest = queryDest.eq('user_id', user.id)
-      } else if (type === 'INGRESO') {
-        queryDest = queryDest.eq('scope', scope).eq('type', 'INCOME')
-        if (scope === 'PERSONAL') queryDest = queryDest.eq('user_id', user.id)
-      } else if (type === 'APORTE') {
-        if (transferMode === 'POOL') queryDest = queryDest.eq('scope', 'SHARED').eq('type', 'ASSET')
-        else if (transferMode === 'MEMBER' && targetUserId) queryDest = queryDest.eq('user_id', targetUserId).eq('type', 'ASSET')
-        else { setDestOptions([]); return }
+        let destinationPromise: PromiseLike<{ data: AccountOption[] | null; error: unknown }>
+        if (type === 'GASTO') {
+          let query = client.from('accounts').select('*').eq('scope', scope)
+            .in('type', ['EXPENSE', 'LIABILITY']).is('archived_at', null)
+          query = scope === 'PERSONAL' ? query.eq('user_id', financeContext.userId) : query.eq('household_id', financeContext.householdId)
+          destinationPromise = query.returns<Account[]>()
+        } else if (type === 'INGRESO') {
+          let query = client.from('accounts').select('*').eq('scope', scope).eq('type', 'INCOME').is('archived_at', null)
+          query = scope === 'PERSONAL' ? query.eq('user_id', financeContext.userId) : query.eq('household_id', financeContext.householdId)
+          destinationPromise = query.returns<Account[]>()
+        } else if (transferMode === 'POOL') {
+          destinationPromise = client.from('accounts').select('*').eq('scope', 'SHARED').eq('household_id', financeContext.householdId)
+            .eq('type', 'ASSET').is('archived_at', null).returns<Account[]>()
+        } else if (targetUserId) {
+          destinationPromise = client.rpc('get_transfer_destinations', { p_target_user_id: targetUserId })
+        } else {
+          destinationPromise = Promise.resolve({ data: [], error: null })
+        }
+
+        const [originResult, destinationResult] = await Promise.all([
+          originQuery.returns<Account[]>(), destinationPromise,
+        ])
+        if (originResult.error) throw originResult.error
+        if (destinationResult.error) throw destinationResult.error
+        if (!cancelled) {
+          setOriginAccounts((originResult.data ?? []).map(({ id, name, icon }) => ({ id, name, icon })))
+          setDestinationAccounts((destinationResult.data ?? []).map(({ id, name, icon }) => ({ id, name, icon })))
+          setLoadingAccounts(false)
+        }
+      } catch (error) {
+        if (!cancelled) { toast.error(getFinanceErrorMessage(error)); setLoadingAccounts(false) }
       }
-      const { data: destData } = await queryDest
-      if (destData) setDestOptions(destData)
     }
-    loadAccounts()
-  }, [scope, type, transferMode, targetUserId])
+    void loadAccounts()
+    return () => { cancelled = true }
+  }, [context, scope, targetUserId, transferMode, type])
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => setAmount(e.target.value.replace(/[^0-9.,]/g, ''))
-  const handleFocus  = () => setAmount(amount.replace(/\./g, ''))
-  const handleBlur   = () => {
-    if (!amount) return
-    let val = amount.replace(/\./g, ',')
-    const parts = val.split(',')
-    const integerPart = parts[0].replace(/\D/g, '')
-    if (!integerPart) { setAmount(''); return }
-    const formattedInt = new Intl.NumberFormat('es-CO').format(BigInt(integerPart))
-    setAmount(parts[1] !== undefined ? `${formattedInt},${parts[1].slice(0, 2)}` : formattedInt)
+  const changeType = (nextType: TransactionType) => {
+    setType(nextType)
+    setSelectedAsset('')
+    setSelectedDestination('')
+    setLoadingAccounts(true)
+  }
+  const changeScope = (nextScope: ScopeType) => {
+    setScope(nextScope)
+    setSelectedAsset('')
+    setSelectedDestination('')
+    setLoadingAccounts(true)
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const val = parseFloat(amount.replace(/\./g, '').replace(',', '.'))
-    if (!val || !selectedAsset || !selectedDestination) { alert('Completa los campos'); setLoading(false); return }
-    let finalDescription = description
-    if (type === 'APORTE' && !description.trim()) {
-      const myName = myProfile?.email?.split('@')[0] || 'Yo'
-      const targetName = familyMembers.find((m: any) => m.id === targetUserId)?.email?.split('@')[0] || 'Destinatario'
-      finalDescription = `Transferencia: ${myName} ➔ ${transferMode === 'POOL' ? 'Fondo Común' : targetName}`
-    } else if (!finalDescription) finalDescription = type === 'GASTO' ? 'Gasto General' : 'Ingreso'
-    const finalDateISO = new Date(date + 'T12:00:00').toISOString()
-    const finalScope = type === 'APORTE' ? 'SHARED' : scope
-    const { data: tx, error: txError } = await supabase.from('transactions').insert({
-      description: finalDescription, notes, type, scope: finalScope,
-      date: finalDateISO, created_by: user.id
-    }).select().single()
-    if (txError) { alert('Error creando transacción'); setLoading(false); return }
-    const lines = []
-    if (type === 'GASTO') {
-      lines.push({ transaction_id: tx.id, account_id: selectedDestination, amount: val })
-      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: -val })
-    } else if (type === 'INGRESO') {
-      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: val })
-      lines.push({ transaction_id: tx.id, account_id: selectedDestination, amount: -val })
-    } else {
-      lines.push({ transaction_id: tx.id, account_id: selectedDestination, amount: val })
-      lines.push({ transaction_id: tx.id, account_id: selectedAsset, amount: -val })
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const numericAmount = parseCurrencyInput(amount)
+    if (!context || numericAmount <= 0 || !selectedAsset || !selectedDestination) {
+      toast.error('Completa el monto y selecciona las dos cuentas.')
+      return
     }
-    await supabase.from('transaction_lines').insert(lines)
-    if (searchParams.get('cat')) router.push('/dashboard/obligaciones')
-    else router.push('/dashboard')
-    setLoading(false)
-  }
+    if (selectedAsset === selectedDestination) {
+      toast.error('La cuenta de origen y destino deben ser diferentes.')
+      return
+    }
 
-  // ── ESTILOS REUTILIZABLES ──
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '10px 14px', borderRadius: '10px',
-    border: '1px solid #e2e8f0', fontSize: '14px', outline: 'none',
-    background: 'white', color: '#1e293b', boxSizing: 'border-box',
-  }
-  const labelStyle: React.CSSProperties = {
-    display: 'block', fontSize: '12px', fontWeight: 700,
-    color: '#64748b', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px'
-  }
-  const sectionStyle: React.CSSProperties = {
-    background: 'white', borderRadius: '16px',
-    border: '1px solid #e2e8f0', padding: '20px',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
-  }
+    setSubmitting(true)
+    try {
+      const currentUser = familyMembers.find((member) => member.id === context.userId)?.email.split('@')[0] ?? 'Yo'
+      const target = familyMembers.find((member) => member.id === targetUserId)?.email.split('@')[0] ?? 'fondo familiar'
+      const finalDescription = description.trim() || (type === 'APORTE'
+        ? `Transferencia: ${currentUser} → ${transferMode === 'POOL' ? 'Fondo común' : target}`
+        : type === 'GASTO' ? 'Gasto general' : 'Ingreso')
+      const finalScope: ScopeType = type === 'APORTE' ? 'SHARED' : scope
+      const lines = type === 'INGRESO'
+        ? [{ account_id: selectedAsset, amount: numericAmount }, { account_id: selectedDestination, amount: -numericAmount }]
+        : [{ account_id: selectedDestination, amount: numericAmount }, { account_id: selectedAsset, amount: -numericAmount }]
 
-  // Configuración por tipo
-  const typeConfig: Record<string, { color: string; bg: string; border: string; label: string; emoji: string }> = {
-    GASTO:   { color: '#dc2626', bg: '#fef2f2', border: '#fecaca', label: 'Gasto',       emoji: '📉' },
-    INGRESO: { color: '#059669', bg: '#ecfdf5', border: '#a7f3d0', label: 'Ingreso',     emoji: '📈' },
-    APORTE:  { color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe', label: 'Transferir',  emoji: '🔄' },
+      const client = getBrowserClient()
+      const billId = searchParams.get('bill')
+      await postTransaction(client, {
+        description: finalDescription,
+        notes,
+        type,
+        scope: finalScope,
+        date,
+        householdId: finalScope === 'SHARED' ? context.householdId : null,
+        lines,
+        billId,
+        billPeriod: billId ? `${getLocalMonthInputValue()}-01` : null,
+      })
+
+      toast.success('Movimiento registrado y asiento equilibrado.')
+      router.replace(billId ? '/dashboard/obligaciones' : '/dashboard')
+    } catch (error) {
+      toast.error(getFinanceErrorMessage(error))
+      setSubmitting(false)
+    }
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <PageHeader title="Nueva transacción" description="Cada movimiento se guarda como un asiento contable equilibrado." />
 
-      {/* ── TIPO ── */}
-      <div style={sectionStyle}>
-        <p style={labelStyle}>Tipo de movimiento</p>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
-          {(['GASTO', 'INGRESO', 'APORTE'] as const).map((t) => {
-            const c = typeConfig[t]
-            const active = type === t
-            return (
-              <button key={t} type="button" onClick={() => setType(t)} style={{
-                padding: '12px 8px', borderRadius: '12px', cursor: 'pointer',
-                border: `2px solid ${active ? c.border : '#e2e8f0'}`,
-                background: active ? c.bg : 'white',
-                color: active ? c.color : '#94a3b8',
-                fontWeight: 700, fontSize: '13px',
-                transition: 'all 0.15s',
-              }}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>{c.emoji}</div>
-                {c.label}
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* ── ÁMBITO (no en APORTE) ── */}
-      {type !== 'APORTE' && (
-        <div style={sectionStyle}>
-          <p style={labelStyle}>Ámbito</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-            {[{ v: 'PERSONAL', label: '👤 Personal' }, { v: 'SHARED', label: '🏠 Familiar' }].map(({ v, label }) => (
-              <button key={v} type="button" onClick={() => setScope(v)} style={{
-                padding: '10px', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
-                border: `2px solid ${scope === v ? '#bfdbfe' : '#e2e8f0'}`,
-                background: scope === v ? '#eff6ff' : 'white',
-                color: scope === v ? '#2563eb' : '#94a3b8',
-                transition: 'all 0.15s',
-              }}>
-                {label}
-              </button>
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <Card>
+          <CardHeader><CardTitle>Tipo de movimiento</CardTitle><CardDescription>Elige qué representa esta operación.</CardDescription></CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-3">
+            {transactionTypes.map(({ value, label, description: helper, icon: Icon }) => (
+              <Button key={value} type="button" variant={type === value ? 'default' : 'outline'} className="h-auto justify-start p-4 text-left" onClick={() => changeType(value)}>
+                <Icon className="size-5" aria-hidden="true" />
+                <span><span className="block font-semibold">{label}</span><span className="block text-xs opacity-75">{helper}</span></span>
+              </Button>
             ))}
-          </div>
-        </div>
-      )}
+          </CardContent>
+        </Card>
 
-      {/* ── MODO TRANSFERENCIA ── */}
-      {type === 'APORTE' && (
-        <div style={{ ...sectionStyle, background: '#eff6ff', border: '1px solid #bfdbfe' }}>
-          <p style={{ ...labelStyle, color: '#1d4ed8' }}>¿Hacia dónde va el dinero?</p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
-            {[{ v: 'POOL', label: '🏦 Fondo Común' }, { v: 'MEMBER', label: '👤 A un familiar' }].map(({ v, label }) => (
-              <button key={v} type="button"
-                onClick={() => { setTransferMode(v); setSelectedDestination('') }} style={{
-                padding: '10px', borderRadius: '10px', cursor: 'pointer', fontWeight: 600, fontSize: '13px',
-                border: `2px solid ${transferMode === v ? '#2563eb' : '#bfdbfe'}`,
-                background: transferMode === v ? '#2563eb' : 'white',
-                color: transferMode === v ? 'white' : '#2563eb',
-                transition: 'all 0.15s',
-              }}>
-                {label}
-              </button>
-            ))}
-          </div>
-          {transferMode === 'MEMBER' && (
-            <div>
-              <p style={labelStyle}>¿A quién le envías?</p>
-              <select value={targetUserId} onChange={e => setTargetUserId(e.target.value)} style={inputStyle}>
-                <option value="">Seleccionar familiar...</option>
-                {familyMembers.map((m: any) => (
-                  <option key={m.id} value={m.id}>{m.email?.split('@')[0]}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-      )}
+        {type !== 'APORTE' ? (
+          <ScopeToggle value={scope} onChange={changeScope} />
+        ) : (
+          <Card>
+            <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
+              <Button type="button" variant={transferMode === 'POOL' ? 'default' : 'outline'} onClick={() => { setTransferMode('POOL'); setSelectedDestination(''); setLoadingAccounts(true) }}>Al fondo familiar</Button>
+              <Button type="button" variant={transferMode === 'MEMBER' ? 'default' : 'outline'} onClick={() => { setTransferMode('MEMBER'); setSelectedDestination(''); setLoadingAccounts(true) }}>A otro integrante</Button>
+              {transferMode === 'MEMBER' && (
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Integrante destinatario</Label>
+                  <Select value={targetUserId} onValueChange={(value) => { setTargetUserId(value); setSelectedDestination(''); setLoadingAccounts(true) }}>
+                    <SelectTrigger aria-label="Integrante destinatario"><SelectValue placeholder="Selecciona un integrante" /></SelectTrigger>
+                    <SelectContent>{familyMembers.filter((member) => member.id !== context?.userId).map((member) => (
+                      <SelectItem key={member.id} value={member.id}>{member.email}</SelectItem>
+                    ))}</SelectContent>
+                  </Select>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
-      {/* ── DATOS PRINCIPALES ── */}
-      <div style={sectionStyle}>
-        <div style={{ display: 'grid', gap: '16px' }}>
+        <Card>
+          <CardHeader><CardTitle>Detalle</CardTitle><CardDescription>Información que aparecerá en el historial.</CardDescription></CardHeader>
+          <CardContent className="grid gap-5 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2"><Label htmlFor="description">Descripción</Label><Input id="description" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ej. Mercado semanal" /></div>
+            <div className="space-y-2"><Label htmlFor="amount">Monto</Label><Input id="amount" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.,]/g, ''))} onBlur={() => setAmount(formatCurrencyInput(amount))} placeholder="0" required /></div>
+            <div className="space-y-2"><Label htmlFor="date">Fecha</Label><Input id="date" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></div>
+            <div className="space-y-2 sm:col-span-2"><Label htmlFor="notes">Notas</Label><Textarea id="notes" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Información opcional" /></div>
+          </CardContent>
+        </Card>
 
-          {/* Fecha */}
-          <div>
-            <label style={labelStyle}>Fecha del movimiento</label>
-            <div style={{ position: 'relative' }}>
-              <CalendarIcon size={16} style={{ position: 'absolute', left: '12px', top: '11px', color: '#94a3b8', pointerEvents: 'none' }} />
-              <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                style={{ ...inputStyle, paddingLeft: '36px' }} />
-            </div>
-          </div>
+        <Card>
+          <CardHeader><CardTitle>Cuentas del asiento</CardTitle><CardDescription>{type === 'INGRESO' ? 'Indica dónde entra el dinero y de qué fuente proviene.' : 'Indica de dónde sale el dinero y su destino.'}</CardDescription></CardHeader>
+          <CardContent className="grid gap-5 sm:grid-cols-2">
+            <div className="space-y-2"><Label>{type === 'INGRESO' ? 'Cuenta que recibe' : 'Cuenta de origen'}</Label><AccountSelect label={type === 'INGRESO' ? 'Cuenta que recibe' : 'Cuenta de origen'} accounts={originAccounts} value={selectedAsset} onChange={setSelectedAsset} disabled={loadingAccounts} /></div>
+            <div className="space-y-2"><Label>{type === 'GASTO' ? 'Categoría o deuda' : type === 'INGRESO' ? 'Fuente del ingreso' : 'Cuenta de destino'}</Label><AccountSelect label={type === 'GASTO' ? 'Categoría o deuda' : type === 'INGRESO' ? 'Fuente del ingreso' : 'Cuenta de destino'} accounts={destinationAccounts} value={selectedDestination} onChange={setSelectedDestination} disabled={loadingAccounts} /></div>
+          </CardContent>
+        </Card>
 
-          {/* Descripción */}
-          <div>
-            <label style={labelStyle}>Descripción</label>
-            <input type="text"
-              placeholder={type === 'APORTE' ? '(Opcional) Ej. Para el arriendo' : 'Ej. Mercado del sábado...'}
-              value={description} onChange={e => setDescription(e.target.value)} style={inputStyle} />
-            {type === 'APORTE' && !description && (
-              <p style={{ fontSize: '11px', color: '#2563eb', marginTop: '6px' }}>
-                💡 Se guardará como: "Transferencia: {myProfile?.email?.split('@')[0] || 'Yo'} ➔{' '}
-                {transferMode === 'POOL' ? 'Fondo Común' : (familyMembers.find((m: any) => m.id === targetUserId)?.email?.split('@')[0] || '...')}"
-              </p>
-            )}
-          </div>
+        {type === 'GASTO' && destinationAccounts.some((account) => account.id === selectedDestination) && (
+          <Alert><ArrowDownRight /><AlertTitle>Clasificación contable</AlertTitle><AlertDescription>Los pagos dirigidos a una deuda reducirán el pasivo y se mostrarán separados de los gastos de consumo.</AlertDescription></Alert>
+        )}
 
-          {/* Monto */}
-          <div>
-            <label style={labelStyle}>Monto (COP)</label>
-            <input type="text" placeholder="0,00" value={amount}
-              onChange={handleChange} onFocus={handleFocus} onBlur={handleBlur}
-              style={{ ...inputStyle, fontSize: '20px', fontWeight: 700, fontFamily: 'monospace', letterSpacing: '0.5px' }} />
-          </div>
-
-          {/* Cuentas */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <div>
-              <label style={labelStyle}>
-                {type === 'APORTE' ? 'Desde (Tu cuenta)' : 'Cuenta origen'}
-              </label>
-              <AccountSelect
-                accounts={originAccounts}
-                value={selectedAsset}
-                onChange={setSelectedAsset}
-                placeholder="Seleccionar..."
-                accentColor="#2563eb"
-              />
-            </div>
-            <div>
-              <label style={labelStyle}>
-                {type === 'APORTE'
-                  ? (transferMode === 'MEMBER' ? 'Cuenta de él/ella' : 'Cuenta del fondo')
-                  : 'Categoría / Destino'}
-              </label>
-              <AccountSelect
-                accounts={destOptions}
-                value={selectedDestination}
-                onChange={setSelectedDestination}
-                placeholder="Seleccionar..."
-                disabled={type === 'APORTE' && transferMode === 'MEMBER' && !targetUserId}
-                accentColor={type === 'GASTO' ? '#dc2626' : type === 'INGRESO' ? '#059669' : '#2563eb'}
-              />
-            </div>
-          </div>
-
-          {/* Notas */}
-          <div>
-            <label style={labelStyle}>Notas (opcional)</label>
-            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
-              placeholder="Observaciones adicionales..."
-              style={{ ...inputStyle, resize: 'none', fontFamily: 'inherit' }} />
-          </div>
-        </div>
-      </div>
-
-      {/* ── BOTÓN SUBMIT ── */}
-      <button type="submit" disabled={loading} style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-        width: '100%', padding: '16px', borderRadius: '14px', border: 'none',
-        background: loading ? '#93c5fd' : 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)',
-        color: 'white', fontSize: '15px', fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer',
-        boxShadow: '0 4px 16px rgba(37,99,235,0.35)', transition: 'all 0.15s',
-      }}>
-        {loading
-          ? <><Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} /> Procesando...</>
-          : <><Send size={16} /> {type === 'APORTE' ? 'Enviar dinero' : 'Guardar movimiento'}</>
-        }
-      </button>
-    </form>
+        <Button type="submit" size="lg" className="w-full" disabled={submitting || loadingAccounts}>
+          {submitting ? <Loader2 className="animate-spin" /> : <Send />}{submitting ? 'Registrando…' : 'Registrar movimiento'}
+        </Button>
+      </form>
+    </div>
   )
 }
 
-export default function NuevaTransaccionPage() {
-  return (
-    <div style={{ maxWidth: '560px', margin: '0 auto', paddingBottom: '40px' }}>
-      <Link href="/dashboard">
-        <button style={{
-          display: 'flex', alignItems: 'center', gap: '6px',
-          background: 'none', border: 'none', color: '#64748b',
-          fontSize: '13px', fontWeight: 600, cursor: 'pointer',
-          marginBottom: '20px', padding: '0'
-        }}>
-          <ArrowLeft size={15} /> Volver al resumen
-        </button>
-      </Link>
-
-      <div style={{ marginBottom: '24px' }}>
-        <h2 style={{ fontSize: '26px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.5px' }}>
-          Nueva Transacción
-        </h2>
-        <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '4px' }}>
-          Registra un gasto, ingreso o transferencia
-        </p>
-      </div>
-
-      <Suspense fallback={
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '60px', color: '#94a3b8' }}>
-          <Loader2 size={28} style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} />
-        </div>
-      }>
-        <TransactionForm />
-      </Suspense>
-    </div>
-  )
+export default function TransactionPage() {
+  return <Suspense fallback={<div className="p-8 text-center text-sm text-muted-foreground">Preparando formulario…</div>}><TransactionForm /></Suspense>
 }

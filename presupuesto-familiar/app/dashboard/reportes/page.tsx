@@ -1,274 +1,124 @@
 'use client'
+
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase'
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RTooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts'
-import { TrendingUp, TrendingDown, PiggyBank, Loader2, AlertCircle, Wallet, Users } from 'lucide-react'
-import { formatCurrency } from '@/lib/formatters'
+import { AlertTriangle, Landmark, PiggyBank, TrendingDown, TrendingUp } from 'lucide-react'
+import { toast } from 'sonner'
+import {
+  Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts'
+import { PageHeader } from '@/components/finance/page-header'
+import { ScopeToggle } from '@/components/finance/scope-toggle'
+import { EmptyState, LoadingState } from '@/components/finance/states'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { getFinanceContext, getFinanceErrorMessage } from '@/lib/finance'
+import { formatCurrency, getLocalMonthInputValue, getMonthBounds } from '@/lib/formatters'
+import { buildMonthlyReport, emptyReportKpis, type ExpenseDatum, type PieDatum, type ReportTransaction } from '@/lib/reporting'
+import { getBrowserClient } from '@/lib/supabase/client'
+import type { ReportKPIs, ScopeType } from '@/lib/types'
 
-const COLORS = ['#2563eb', '#059669', '#f59e0b', '#dc2626', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16']
+const colors = ['#2563eb', '#059669', '#f59e0b', '#dc2626', '#8b5cf6', '#ec4899', '#0891b2', '#65a30d']
 
-const generateMonths = () => {
-  const months = []
-  const now = new Date()
-  for (let i = 0; i < 18; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    const name = new Intl.DateTimeFormat('es-CO', { month: 'long', year: 'numeric' }).format(d)
-    months.push({ value, name: name.charAt(0).toUpperCase() + name.slice(1) })
-  }
-  return months
-}
+interface TooltipPayload { value?: number; name?: string }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: TooltipPayload[]; label?: string }) {
   if (!active || !payload?.length) return null
+  return <div className="rounded-lg border bg-popover p-3 text-sm shadow-lg"><p className="font-semibold">{label || payload[0].name}</p><p className="metric-value text-primary">{formatCurrency(Number(payload[0].value ?? 0))}</p></div>
+}
+
+function monthOptions() {
+  const now = new Date()
+  return Array.from({ length: 24 }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - index, 1)
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    const raw = new Intl.DateTimeFormat('es-CO', { month: 'long', year: 'numeric' }).format(date)
+    return { value, label: raw.charAt(0).toUpperCase() + raw.slice(1) }
+  })
+}
+
+export default function ReportsPage() {
+  const [scope, setScope] = useState<ScopeType>('PERSONAL')
+  const [selectedMonth, setSelectedMonth] = useState(getLocalMonthInputValue)
+  const [months] = useState(monthOptions)
+  const [pieData, setPieData] = useState<PieDatum[]>([])
+  const [topExpenses, setTopExpenses] = useState<ExpenseDatum[]>([])
+  const [kpis, setKpis] = useState<ReportKPIs>(emptyReportKpis)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadReport() {
+      try {
+        const client = getBrowserClient()
+        const context = await getFinanceContext(client)
+        if (scope === 'SHARED' && !context.householdId) {
+          if (!cancelled) {
+            setPieData([])
+            setTopExpenses([])
+            setKpis(emptyReportKpis)
+            setLoading(false)
+          }
+          return
+        }
+        const bounds = getMonthBounds(selectedMonth)
+        let query = client.from('transactions')
+          .select('*, amount:transaction_lines(amount, account:accounts(name,type))')
+          .eq('scope', scope).eq('is_reversal', false).is('voided_at', null)
+          .gte('date', bounds.start).lte('date', bounds.end)
+        query = scope === 'PERSONAL'
+          ? query.eq('created_by', context.userId)
+          : query.eq('household_id', context.householdId)
+        const { data, error } = await query.returns<ReportTransaction[]>()
+        if (error) throw error
+
+        const report = buildMonthlyReport(data ?? [])
+        if (!cancelled) {
+          setPieData(report.categories)
+          setTopExpenses(report.topExpenses)
+          setKpis(report.kpis)
+          setLoading(false)
+        }
+      } catch (error) {
+        if (!cancelled) { toast.error(getFinanceErrorMessage(error)); setLoading(false) }
+      }
+    }
+    void loadReport()
+    return () => { cancelled = true }
+  }, [scope, selectedMonth])
+
+  const changeScope = (next: ScopeType) => { setLoading(true); setScope(next) }
+
   return (
-    <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '10px 14px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontSize: '13px' }}>
-      <p style={{ fontWeight: 700, color: '#1e293b', margin: '0 0 4px' }}>{label || payload[0].name}</p>
-      <p style={{ color: '#2563eb', fontWeight: 600, margin: 0 }}>{formatCurrency(payload[0].value)}</p>
+    <div className="space-y-6">
+      <PageHeader title="Reportes" description="Ingresos, consumo, ahorro y pagos de deuda correctamente separados."
+        actions={<><ScopeToggle value={scope} onChange={changeScope} /><Select value={selectedMonth} onValueChange={(value) => { setLoading(true); setSelectedMonth(value) }}><SelectTrigger className="w-[190px]" aria-label="Mes del reporte"><SelectValue /></SelectTrigger><SelectContent>{months.map((month) => <SelectItem key={month.value} value={month.value}>{month.label}</SelectItem>)}</SelectContent></Select></>} />
+
+      {loading ? <LoadingState label="Generando reporte…" /> : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard title="Ingresos" value={kpis.income} helper="Entradas del periodo" icon={TrendingUp} tone="emerald" />
+            <MetricCard title="Gastos de consumo" value={kpis.expense} helper="Sin incluir capital de deuda" icon={TrendingDown} tone="red" />
+            <MetricCard title="Abonos a deuda" value={kpis.debtPayments} helper="Flujo de financiación" icon={Landmark} tone="amber" />
+            <MetricCard title="Ahorro neto" value={kpis.savings} helper={`Tasa de ahorro ${kpis.savingsRate.toFixed(1)}%`} icon={PiggyBank} tone={kpis.savings >= 0 ? 'blue' : 'red'} />
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-2">
+            <Card><CardHeader><CardTitle>Distribución del gasto</CardTitle><CardDescription>Solo categorías de consumo.</CardDescription></CardHeader><CardContent className="h-80">{pieData.length ? <ResponsiveContainer width="100%" height="100%"><PieChart accessibilityLayer><Pie data={pieData} dataKey="value" nameKey="name" innerRadius={65} outerRadius={100} paddingAngle={3}>{pieData.map((datum, index) => <Cell key={datum.name} fill={colors[index % colors.length]} />)}</Pie><Tooltip content={<ChartTooltip />} /><Legend /></PieChart></ResponsiveContainer> : <EmptyState title="Sin gastos" description="No se registraron gastos de consumo en este periodo." />}</CardContent></Card>
+            <Card><CardHeader><CardTitle>Flujo del periodo</CardTitle><CardDescription>Comparación entre ingresos, consumo y deuda.</CardDescription></CardHeader><CardContent className="h-80"><ResponsiveContainer width="100%" height="100%"><BarChart accessibilityLayer data={[{ name: 'Ingresos', amount: kpis.income }, { name: 'Consumo', amount: kpis.expense }, { name: 'Deuda', amount: kpis.debtPayments }]}><CartesianGrid strokeDasharray="3 3" vertical={false} /><XAxis dataKey="name" tickLine={false} axisLine={false} /><YAxis hide /><Tooltip content={<ChartTooltip />} /><Bar dataKey="amount" radius={[8, 8, 0, 0]}>{['#059669', '#dc2626', '#f59e0b'].map((color) => <Cell key={color} fill={color} />)}</Bar></BarChart></ResponsiveContainer></CardContent></Card>
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-2">
+            <Card><CardHeader><CardTitle>Detalle por categoría</CardTitle><CardDescription>Participación sobre el gasto de consumo.</CardDescription></CardHeader><CardContent>{pieData.length ? <div className="space-y-4">{pieData.map((category, index) => <div key={category.name}><div className="mb-1.5 flex justify-between gap-3 text-sm"><span className="font-medium">{category.name}</span><span className="metric-value font-semibold">{formatCurrency(category.value)}</span></div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full" style={{ width: `${category.percent}%`, background: colors[index % colors.length] }} /></div><p className="mt-1 text-right text-xs text-muted-foreground">{category.percent.toFixed(1)}%</p></div>)}</div> : <EmptyState title="Sin categorías" description="No hay datos para distribuir." />}</CardContent></Card>
+            <Card><CardHeader><div className="flex items-center gap-2"><AlertTriangle className="size-4 text-amber-600" /><CardTitle>Mayores gastos</CardTitle></div><CardDescription>Top cinco del periodo.</CardDescription></CardHeader><CardContent>{topExpenses.length ? <div className="divide-y">{topExpenses.map((expense, index) => <div key={`${expense.description}-${expense.date}-${index}`} className="flex items-center justify-between gap-4 py-3"><div className="min-w-0"><p className="truncate text-sm font-medium">{expense.description}</p><p className="text-xs text-muted-foreground">{expense.category} · {expense.date.slice(0, 10)}</p></div><p className="metric-value shrink-0 text-sm font-bold text-red-600">{formatCurrency(expense.amount)}</p></div>)}</div> : <EmptyState title="Sin gastos" description="No hay compras para mostrar." />}</CardContent></Card>
+          </div>
+        </>
+      )}
     </div>
   )
 }
 
-export default function ReportesPage() {
-  const supabase = createClient()
-  const [loading, setLoading]     = useState(true)
-  const [scope, setScope]         = useState('PERSONAL')
-  const [months]                  = useState(generateMonths)
-  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
-  const [pieData, setPieData]     = useState<any[]>([])
-  const [barData, setBarData]     = useState<any[]>([])
-  const [topExpenses, setTopExpenses] = useState<any[]>([])
-  const [kpis, setKpis]           = useState({ income: 0, expense: 0, savings: 0, savingsRate: 0 })
-
-  const fetchReportData = async () => {
-    setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const [year, month] = selectedMonth.split('-')
-    const startDate = `${year}-${month}-01`
-    const endDate   = new Date(parseInt(year), parseInt(month), 0).toISOString().slice(0, 10)
-    let query = supabase.from('transactions')
-      .select('id, type, description, date, amount:transaction_lines(amount, account:accounts(name, type))')
-      .gte('date', startDate).lte('date', endDate + 'T23:59:59').eq('scope', scope)
-    if (scope === 'PERSONAL') query = query.eq('created_by', user.id)
-    const { data: transactions } = await query
-    if (transactions) {
-      let totalIncome = 0, totalExpense = 0
-      const expensesByCategory: Record<string, number> = {}
-      const individualExpenses: any[] = []
-      transactions.forEach((tx: any) => {
-        if (tx.type === 'GASTO') {
-          const line = tx.amount.find((l: any) => l.amount > 0)
-          const amount = line?.amount || 0
-          const cat = line?.account?.name || 'Otros'
-          totalExpense += amount
-          expensesByCategory[cat] = (expensesByCategory[cat] || 0) + amount
-          individualExpenses.push({ description: tx.description, amount, date: tx.date, category: cat })
-        } else if (tx.type === 'INGRESO') {
-          const line = tx.amount.find((l: any) => l.amount > 0)
-          totalIncome += line?.amount || 0
-        }
-      })
-      const pData = Object.entries(expensesByCategory)
-        .map(([name, value]) => ({ name, value, percent: totalExpense > 0 ? (value / totalExpense) * 100 : 0 }))
-        .sort((a, b) => b.value - a.value)
-      const savings = totalIncome - totalExpense
-      setPieData(pData)
-      setBarData([{ name: 'Ingresos', amount: totalIncome }, { name: 'Gastos', amount: totalExpense }])
-      setTopExpenses(individualExpenses.sort((a, b) => b.amount - a.amount).slice(0, 5))
-      setKpis({ income: totalIncome, expense: totalExpense, savings, savingsRate: totalIncome > 0 ? (savings / totalIncome) * 100 : 0 })
-    }
-    setLoading(false)
-  }
-
-  useEffect(() => { fetchReportData() }, [scope, selectedMonth])
-
-  const cardStyle: React.CSSProperties = {
-    background: 'white', borderRadius: '18px', border: '1px solid #e2e8f0',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden'
-  }
-  const cardHeader: React.CSSProperties = { padding: '18px 20px', borderBottom: '1px solid #f1f5f9' }
-  const cardBody: React.CSSProperties   = { padding: '20px' }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', paddingBottom: '40px' }}>
-
-      {/* ── ENCABEZADO ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h2 style={{ fontSize: '26px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.5px' }}>
-            Reportes
-          </h2>
-          <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '3px' }}>Análisis mensual de tus finanzas</p>
-        </div>
-        {/* Controles */}
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          {/* Scope tabs */}
-          <div style={{ display: 'inline-flex', gap: '4px', background: '#f1f5f9', borderRadius: '12px', padding: '4px' }}>
-            {[{ v: 'PERSONAL', label: '👤 Personal', Icon: Wallet }, { v: 'SHARED', label: '🏠 Familiar', Icon: Users }].map(({ v, label }) => (
-              <button key={v} onClick={() => setScope(v)} style={{
-                padding: '7px 16px', borderRadius: '9px', border: 'none', cursor: 'pointer',
-                fontSize: '12px', fontWeight: 600, transition: 'all 0.15s',
-                background: scope === v ? 'white' : 'transparent',
-                color: scope === v ? '#2563eb' : '#64748b',
-                boxShadow: scope === v ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
-              }}>{label}</button>
-            ))}
-          </div>
-          {/* Selector mes */}
-          <select value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} style={{
-            padding: '9px 14px', borderRadius: '10px', border: '1px solid #e2e8f0',
-            fontSize: '13px', fontWeight: 600, color: '#1e293b', background: 'white',
-            outline: 'none', cursor: 'pointer'
-          }}>
-            {months.map(m => <option key={m.value} value={m.value}>{m.name}</option>)}
-          </select>
-        </div>
-      </div>
-
-      {loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '80px', gap: '12px', color: '#94a3b8' }}>
-          <Loader2 size={32} style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} />
-          <span style={{ fontSize: '13px' }}>Generando reporte...</span>
-        </div>
-      ) : (<>
-
-        {/* ── KPIs ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '14px' }}>
-          {[
-            { label: 'Ingresos', value: kpis.income, color: '#059669', bg: '#ecfdf5', border: '#a7f3d0', Icon: TrendingUp, sub: 'Total recibido' },
-            { label: 'Gastos', value: kpis.expense, color: '#dc2626', bg: '#fef2f2', border: '#fecaca', Icon: TrendingDown, sub: 'Total gastado' },
-            { label: 'Balance neto', value: kpis.savings, color: kpis.savings >= 0 ? '#2563eb' : '#dc2626', bg: '#eff6ff', border: '#bfdbfe', Icon: PiggyBank, sub: `Tasa de ahorro: ${kpis.savingsRate.toFixed(1)}%` },
-          ].map(({ label, value, color, bg, border, Icon, sub }) => (
-            <div key={label} style={{ background: 'white', borderRadius: '16px', border: '1px solid #e2e8f0', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <p style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0 }}>{label}</p>
-                <div style={{ width: '34px', height: '34px', borderRadius: '9px', background: bg, border: `1px solid ${border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Icon size={16} style={{ color }} />
-                </div>
-              </div>
-              <p style={{ fontSize: '22px', fontWeight: 800, color, margin: 0, letterSpacing: '-0.5px' }}>{formatCurrency(value)}</p>
-              <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '4px' }}>{sub}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* ── GRÁFICAS ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-          {/* Donut */}
-          <div style={cardStyle}>
-            <div style={cardHeader}>
-              <p style={{ fontWeight: 700, fontSize: '14px', color: '#0f172a', margin: 0 }}>Distribución de Gastos</p>
-              <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>Por categorías</p>
-            </div>
-            <div style={{ ...cardBody, height: '300px' }}>
-              {pieData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={pieData} cx="50%" cy="50%" innerRadius={65} outerRadius={95} paddingAngle={4} dataKey="value">
-                      {pieData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                    </Pie>
-                    <RTooltip content={<CustomTooltip />} />
-                    <Legend verticalAlign="bottom" height={36} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '13px' }}>Sin datos este mes</div>}
-            </div>
-          </div>
-
-          {/* Barras */}
-          <div style={cardStyle}>
-            <div style={cardHeader}>
-              <p style={{ fontWeight: 700, fontSize: '14px', color: '#0f172a', margin: 0 }}>Flujo de Caja</p>
-              <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>Ingresos vs Gastos</p>
-            </div>
-            <div style={{ ...cardBody, height: '300px' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barData} barSize={64}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                  <XAxis dataKey="name" tickLine={false} axisLine={false} style={{ fontSize: '12px' }} />
-                  <YAxis hide />
-                  <RTooltip content={<CustomTooltip />} cursor={{ fill: 'transparent' }} />
-                  <Bar dataKey="amount" radius={[10, 10, 0, 0]}>
-                    {barData.map((_, i) => <Cell key={i} fill={i === 0 ? '#059669' : '#dc2626'} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-
-        {/* ── DETALLE + TOP GASTOS ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-          {/* Detalle por categoría */}
-          <div style={cardStyle}>
-            <div style={cardHeader}>
-              <p style={{ fontWeight: 700, fontSize: '14px', color: '#0f172a', margin: 0 }}>Detalle por Categoría</p>
-            </div>
-            <div style={cardBody}>
-              {pieData.length === 0 ? <p style={{ color: '#94a3b8', fontSize: '13px' }}>Sin gastos este mes.</p> : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {pieData.map((cat, idx) => (
-                    <div key={idx}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '5px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#334155', display: 'flex', alignItems: 'center', gap: '7px' }}>
-                          <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: COLORS[idx % COLORS.length], display: 'inline-block', flexShrink: 0 }} />
-                          {cat.name}
-                        </span>
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e293b' }}>{formatCurrency(cat.value)}</span>
-                      </div>
-                      <div style={{ height: '6px', background: '#f1f5f9', borderRadius: '99px', overflow: 'hidden' }}>
-                        <div style={{ height: '100%', borderRadius: '99px', background: COLORS[idx % COLORS.length], width: `${cat.percent}%`, transition: 'width 0.6s ease' }} />
-                      </div>
-                      <p style={{ fontSize: '11px', color: '#94a3b8', textAlign: 'right', marginTop: '3px' }}>{cat.percent.toFixed(1)}%</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Top 5 gastos */}
-          <div style={cardStyle}>
-            <div style={cardHeader}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <AlertCircle size={16} style={{ color: '#f59e0b' }} />
-                <p style={{ fontWeight: 700, fontSize: '14px', color: '#0f172a', margin: 0 }}>Mayores Gastos</p>
-              </div>
-              <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>Top 5 compras del mes</p>
-            </div>
-            <div style={cardBody}>
-              {topExpenses.length === 0 ? <p style={{ color: '#94a3b8', fontSize: '13px' }}>Sin gastos este mes.</p> : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-                  {topExpenses.map((tx, idx) => (
-                    <div key={idx} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '12px 0', borderBottom: idx < topExpenses.length - 1 ? '1px solid #f8fafc' : 'none', gap: '12px'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span style={{
-                          width: '26px', height: '26px', borderRadius: '7px', background: '#f8fafc',
-                          border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          fontSize: '11px', fontWeight: 800, color: '#94a3b8', flexShrink: 0
-                        }}>{idx + 1}</span>
-                        <div>
-                          <p style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b', margin: 0 }}>{tx.description}</p>
-                          <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '1px' }}>
-                            {new Date(tx.date).toLocaleDateString('es-CO')} · {tx.category}
-                          </p>
-                        </div>
-                      </div>
-                      <p style={{ fontSize: '14px', fontWeight: 800, color: '#dc2626', margin: 0, flexShrink: 0 }}>
-                        {formatCurrency(tx.amount)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </>)}
-    </div>
-  )
+function MetricCard({ title, value, helper, icon: Icon, tone }: { title: string; value: number; helper: string; icon: typeof TrendingUp; tone: 'blue' | 'emerald' | 'red' | 'amber' }) {
+  const tones = { blue: 'bg-blue-50 text-blue-700', emerald: 'bg-emerald-50 text-emerald-700', red: 'bg-red-50 text-red-700', amber: 'bg-amber-50 text-amber-700' }
+  return <Card><CardContent className="p-5"><div className="mb-4 flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</p><span className={`flex size-9 items-center justify-center rounded-lg ${tones[tone]}`}><Icon className="size-4" /></span></div><p className="metric-value text-xl font-bold">{formatCurrency(value)}</p><p className="mt-1 text-xs text-muted-foreground">{helper}</p></CardContent></Card>
 }
