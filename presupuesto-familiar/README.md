@@ -2,6 +2,8 @@
 
 Aplicación familiar de contabilidad por partida doble construida con Next.js y Supabase. Esta versión prioriza la conservación del historial, la trazabilidad de correcciones y una lectura financiera más clara.
 
+Producción: [family-budget-beta.vercel.app](https://family-budget-beta.vercel.app). La refactorización y sus cuatro migraciones están desplegadas; los nombres locales coinciden con el historial remoto de Supabase.
+
 ## Mejoras principales
 
 - Los asientos se registran de forma atómica mediante funciones de PostgreSQL: o se guarda todo el movimiento o no se guarda nada.

@@ -1,127 +1,83 @@
-# Respaldo y migración segura de Supabase
+# Respaldo y mantenimiento seguro de Supabase
 
-Esta guía protege el historial financiero existente. La regla principal es sencilla: **primero copia verificable, después pruebas y solamente al final producción**.
+Esta guía describe el estado real del proyecto `iixvevckhrazsaiyhciu` y el procedimiento para cambios futuros. La regla principal es: **copia verificable, migración transaccional y comprobación posterior**.
 
-## 1. Identifique producción sin exponer secretos
+## Estado desplegado el 16 de julio de 2026
 
-En Supabase Dashboard copie el `Project ID` desde la URL del proyecto y confirme visualmente que es el proyecto productivo. No copie claves privadas en archivos del repositorio, capturas ni mensajes.
+Antes de la refactorización se creó el esquema privado `backup_20260716`. No contiene `auth.users`, contraseñas ni claves; conserva las tablas funcionales necesarias para reconstruir el historial:
 
-La aplicación web solo necesita:
+| Tabla | Filas copiadas |
+| --- | ---: |
+| `profiles` | 4 |
+| `accounts` | 86 |
+| `transactions` | 451 |
+| `transaction_lines` | 885 |
+| `recurring_bills` | 3 |
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` (o la clave pública publishable equivalente)
+La copia y las tablas activas tenían la misma suma global de líneas: `-7.299.268,00`. El acceso al esquema se revocó a `public`, `anon` y `authenticated`; únicamente los roles administrativos de la base pueden leerlo.
 
-La clave `service_role` puede saltarse RLS y nunca debe llegar al navegador ni a Git.
+Las cuatro versiones locales coinciden con el historial remoto de Supabase:
 
-## 2. Cree dos respaldos antes de migrar
+1. `20260717014327_backup_before_safe_refactor_20260716.sql`
+2. `20260717014418_safe_finance_refactor_20260716.sql`
+3. `20260717014638_harden_rpc_permissions_and_indexes_20260716.sql`
+4. `20260717015306_enforce_rpc_only_ledger_writes_20260716.sql`
 
-### Respaldo administrado
+No renombre estas migraciones ni las vuelva a ejecutar manualmente. Para un cambio nuevo, cree otra con `npx supabase@latest migration new nombre_descriptivo`.
 
-Revise `Database > Backups` en Supabase Dashboard. Los proyectos Pro, Team y Enterprise tienen copias diarias; en el plan gratuito Supabase recomienda exportaciones lógicas periódicas. Confirme la fecha y hora de la última copia antes de seguir.
+## Integridad histórica
 
-### Exportación lógica fuera de Supabase
+La auditoría encontró 13 movimientos anteriores incompletos: cuatro sin líneas y nueve con una sola línea. Se conservaron exactamente, se marcaron con `legacy_incomplete` y no participan en indicadores. No deben corregirse inventando una contrapartida; requieren identificar cuenta, soporte y naturaleza contable con la familia.
 
-Desde la raíz de la aplicación:
+Después de la migración:
 
-```powershell
-npx supabase@latest login
-npx supabase@latest link --project-ref ID_DE_PRODUCCION
-New-Item -ItemType Directory -Force -Path ..\backups\supabase | Out-Null
-npx supabase@latest db dump --linked --file ..\backups\supabase\schema.sql
-npx supabase@latest db dump --linked --data-only --use-copy --file ..\backups\supabase\data.sql
-npx supabase@latest db dump --linked --role-only --file ..\backups\supabase\roles.sql
+- continúan 451 movimientos y 885 líneas;
+- no hay líneas huérfanas;
+- no hay filas compartidas sin hogar;
+- todos los asientos no heredados tienen al menos dos líneas y suman cero;
+- `anon` no puede leer movimientos/saldos ni ejecutar las RPC financieras;
+- los usuarios autenticados no pueden insertar cabeceras o líneas directamente;
+- la escritura contable se realiza de forma atómica mediante `post_transaction` o `post_bill_payment`.
+
+## Variables locales
+
+La aplicación solo necesita la URL y la clave pública del proyecto:
+
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=https://iixvevckhrazsaiyhciu.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=CLAVE_PUBLICA_DEL_PROYECTO
 ```
 
-El CLI solicitará la contraseña de la base de datos cuando corresponda. Guarde esos archivos fuera del repositorio: contienen información financiera y pueden contener datos personales.
+Nunca coloque una clave `service_role`, una contraseña de base de datos o un token privado en una variable `NEXT_PUBLIC_*`, en Git o en mensajes.
 
-Compruebe que los tres archivos existen, que `data.sql` no está vacío y copie la carpeta a una ubicación adicional cifrada.
+## Procedimiento para una migración futura
 
-Ejecute también `supabase/verification/before_migration_snapshot.sql` en SQL Editor y guarde su resultado. Ese archivo deja una fotografía de conteos, saldos y posibles descuadres previos para compararla después.
+1. Confirme el proyecto vinculado y el historial:
 
-> Las copias de base de datos no contienen los objetos binarios de Supabase Storage; únicamente incluyen sus metadatos. Si la aplicación llega a usar archivos, respáldelos por separado.
+   ```powershell
+   npx supabase@latest projects list
+   npx supabase@latest migration list --linked
+   ```
 
-## 3. Cree un entorno de prueba
+2. Cree una exportación lógica fuera del repositorio cuando tenga la contraseña de base de datos. En el plan gratuito, conserve además una copia privada fechada de las tablas afectadas.
+3. Cree la migración con el CLI y revise que no contenga `drop table`, `truncate`, eliminación masiva ni cambios de tipo con pérdida de información.
+4. Ejecute `npx supabase@latest db push --linked --dry-run`.
+5. Aplique una sola vez y ejecute los asesores de seguridad/rendimiento.
+6. Ejecute `supabase/verification/after_migration_checks.sql` y compare conteos, suma de líneas y saldos con la copia previa.
+7. Publique la aplicación únicamente cuando CI y la vista previa de Vercel estén aprobados.
 
-La opción más segura es crear un proyecto Supabase separado para desarrollo. Restaure allí una copia desensibilizada o, si necesita probar exactamente los siete meses, restrinja su acceso a las mismas personas autorizadas.
+No use `supabase db reset --linked`: destruye y reconstruye el esquema remoto. Si una migración aplicada necesita corregirse, cree otra migración progresiva; no edite el historial remoto ni borre filas para “hacer coincidir” resultados.
 
-Desvincule producción y vincule explícitamente el proyecto de prueba:
+## Recuperación
 
-```powershell
-npx supabase@latest link --project-ref ID_DE_RESPALDO
-npx supabase@latest projects list
-```
+El esquema `backup_20260716` es una copia interna, no reemplaza un respaldo externo ni recuperación punto en el tiempo. Si aparece una discrepancia:
 
-Verifique dos veces que la marca de proyecto vinculado corresponde al respaldo. Cree `.env.local` con la URL y clave pública de ese proyecto; no reutilice valores productivos.
+1. detenga nuevas escrituras;
+2. capture conteos y resultados de verificación;
+3. no vacíe ni sobrescriba las tablas activas;
+4. prepare la restauración en una transacción y compárela primero en otro proyecto o entorno local;
+5. confirme claves foráneas, saldos y RLS antes de hacer `commit`.
 
-## 4. Capture el esquema existente
+## Pendiente de configuración manual
 
-Este repositorio nació sin historial de migraciones de la base ya creada. Antes de desplegar la nueva migración, capture el esquema del proyecto de respaldo:
-
-```powershell
-npx supabase@latest db pull baseline_respaldo
-npx supabase@latest migration list
-```
-
-Revise la migración generada. `db pull` usa Docker para comparar esquemas y puede incluir instrucciones inesperadas; no acepte eliminaciones sin revisarlas.
-
-## 5. Pruebe la migración
-
-Primero vea qué se aplicaría:
-
-```powershell
-npx supabase@latest db push --linked --dry-run
-```
-
-La salida debe mencionar la migración `202607160001_safe_finance_refactor.sql` y no debe contener comandos para borrar tablas ni datos. Después, solo sobre el respaldo:
-
-```powershell
-npx supabase@latest db push --linked
-npx supabase@latest db lint --linked --level error
-```
-
-No use `supabase db reset --linked`: ese comando destruye y reconstruye el esquema remoto, por lo que borraría los datos del proyecto vinculado.
-
-## 6. Compruebe integridad
-
-Ejecute el contenido de `supabase/verification/after_migration_checks.sql` en SQL Editor del proyecto de respaldo.
-
-El resultado esperado es:
-
-- Cero transacciones desbalanceadas.
-- Cero líneas contables huérfanas.
-- Cero cuentas sin hogar.
-- Cero transacciones de reversión incompletas.
-- Los conteos de cuentas, movimientos y líneas coinciden con los conteos anotados antes de migrar.
-
-Luego pruebe manualmente con un usuario de prueba:
-
-1. Iniciar sesión y abrir el tablero.
-2. Registrar ingreso, gasto y transferencia.
-3. Crear una obligación y pagar una cuota con capital e interés.
-4. Corregir y anular una transacción.
-5. Archivar una cuenta vacía y una obligación.
-6. Comparar saldos y reporte mensual con el libro mayor.
-7. Confirmar en otra sesión que un usuario ajeno no ve el hogar.
-
-## 7. Pase a producción únicamente después de aprobar
-
-1. Detenga temporalmente el registro de movimientos.
-2. Genere una nueva exportación lógica y confirme el backup administrado.
-3. Vincule explícitamente producción y compruébelo con `projects list`.
-4. Ejecute `db push --linked --dry-run`.
-5. Aplique con `db push --linked` una sola vez y por una sola persona.
-6. Ejecute las verificaciones SQL y una prueba de humo.
-7. Reactive el registro de movimientos.
-
-Si cualquier conteo o saldo no coincide, no intente corregirlo borrando filas: detenga el proceso, conserve los resultados y restaure la copia siguiendo el procedimiento de Supabase Dashboard.
-
-## Lista de control
-
-- [ ] Copia administrada disponible.
-- [ ] `schema.sql`, `data.sql` y `roles.sql` guardados fuera de Git.
-- [ ] Migración aprobada en un proyecto de respaldo.
-- [ ] Verificaciones SQL sin hallazgos.
-- [ ] Pruebas funcionales completadas.
-- [ ] `.env.local` apunta al entorno correcto.
-- [ ] Producción tiene una copia recién creada.
-- [ ] Una sola persona despliega la migración.
+El asesor de Supabase mantiene una advertencia: **Leaked Password Protection** está desactivado. Si el plan y la configuración de Auth lo permiten, actívelo en `Authentication > Settings > Password Security`. Las advertencias sobre RPC `SECURITY DEFINER` para `authenticated` son intencionales: esas funciones son la API de escritura y cada una valida sesión, propiedad y hogar.
