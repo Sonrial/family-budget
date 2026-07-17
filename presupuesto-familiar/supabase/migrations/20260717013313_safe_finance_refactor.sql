@@ -65,12 +65,22 @@ create index if not exists accounts_scope_owner_type_idx
   on public.accounts (scope, user_id, type) where archived_at is null;
 create index if not exists accounts_user_id_idx
   on public.accounts (user_id);
+create index if not exists accounts_archived_by_idx
+  on public.accounts (archived_by);
 create index if not exists accounts_household_type_idx
   on public.accounts (household_id, type) where archived_at is null;
 create index if not exists transactions_scope_owner_date_idx
   on public.transactions (scope, created_by, date desc) where is_reversal = false;
 create index if not exists transactions_created_by_idx
   on public.transactions (created_by);
+create index if not exists transactions_voided_by_idx
+  on public.transactions (voided_by);
+create index if not exists transactions_reversal_of_idx
+  on public.transactions (reversal_of);
+create index if not exists transactions_corrected_from_idx
+  on public.transactions (corrected_from);
+create index if not exists transactions_replaced_by_idx
+  on public.transactions (replaced_by);
 create index if not exists transactions_household_date_idx
   on public.transactions (household_id, date desc) where is_reversal = false;
 create index if not exists transaction_lines_account_idx
@@ -83,8 +93,16 @@ create index if not exists recurring_bills_created_by_idx
   on public.recurring_bills (created_by);
 create index if not exists recurring_bills_category_id_idx
   on public.recurring_bills (category_id);
+create index if not exists recurring_bills_household_id_idx
+  on public.recurring_bills (household_id);
+create index if not exists recurring_bills_archived_by_idx
+  on public.recurring_bills (archived_by);
 create index if not exists household_members_user_id_idx
   on public.household_members (user_id);
+create index if not exists households_owner_id_idx
+  on public.households (owner_id);
+create index if not exists recurring_bill_payments_paid_by_idx
+  on public.recurring_bill_payments (paid_by);
 create unique index if not exists recurring_bill_payments_transaction_uidx
   on public.recurring_bill_payments (transaction_id);
 
@@ -684,11 +702,21 @@ using (owner_id = (select auth.uid())) with check (owner_id = (select auth.uid()
 
 create policy household_members_select_member on public.household_members for select to authenticated
 using (public.is_household_member(household_id));
-create policy household_members_manage_owner on public.household_members for all to authenticated
+create policy household_members_insert_owner on public.household_members for insert to authenticated
+with check (exists (
+  select 1 from public.households h
+  where h.id = household_id and h.owner_id = (select auth.uid())
+));
+create policy household_members_update_owner on public.household_members for update to authenticated
 using (exists (
   select 1 from public.households h
   where h.id = household_id and h.owner_id = (select auth.uid())
 )) with check (exists (
+  select 1 from public.households h
+  where h.id = household_id and h.owner_id = (select auth.uid())
+));
+create policy household_members_delete_owner on public.household_members for delete to authenticated
+using (exists (
   select 1 from public.households h
   where h.id = household_id and h.owner_id = (select auth.uid())
 ));
@@ -767,18 +795,18 @@ using (exists (
   )
 ));
 
-revoke all on function public.is_household_member(uuid) from public;
-revoke all on function public.get_my_household_id() from public;
-revoke all on function public.get_family_profiles() from public;
-revoke all on function public.get_transfer_destinations(uuid) from public;
-revoke all on function public.post_transaction(text,text,text,text,date,uuid,jsonb) from public;
-revoke all on function public.void_transaction(uuid,text) from public;
-revoke all on function public.correct_transaction(uuid,text,date,numeric) from public;
-revoke all on function public.create_liability_account(text,numeric,text,uuid) from public;
-revoke all on function public.archive_account(uuid) from public;
-revoke all on function public.archive_recurring_bill(uuid) from public;
-revoke all on function public.record_bill_payment(uuid,uuid,date) from public;
-revoke all on function public.post_bill_payment(uuid,date,text,text,text,text,date,uuid,jsonb) from public;
+revoke all on function public.is_household_member(uuid) from public, anon;
+revoke all on function public.get_my_household_id() from public, anon;
+revoke all on function public.get_family_profiles() from public, anon;
+revoke all on function public.get_transfer_destinations(uuid) from public, anon;
+revoke all on function public.post_transaction(text,text,text,text,date,uuid,jsonb) from public, anon;
+revoke all on function public.void_transaction(uuid,text) from public, anon;
+revoke all on function public.correct_transaction(uuid,text,date,numeric) from public, anon;
+revoke all on function public.create_liability_account(text,numeric,text,uuid) from public, anon;
+revoke all on function public.archive_account(uuid) from public, anon;
+revoke all on function public.archive_recurring_bill(uuid) from public, anon;
+revoke all on function public.record_bill_payment(uuid,uuid,date) from public, anon;
+revoke all on function public.post_bill_payment(uuid,date,text,text,text,text,date,uuid,jsonb) from public, anon;
 
 grant execute on function public.is_household_member(uuid) to authenticated;
 grant execute on function public.get_my_household_id() to authenticated;
