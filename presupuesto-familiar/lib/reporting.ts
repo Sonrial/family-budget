@@ -44,7 +44,7 @@ export function buildMonthlyReport(transactions: ReportTransaction[]): MonthlyRe
   const expenses: ExpenseDatum[] = []
 
   for (const transaction of transactions) {
-    if (transaction.voided_at || transaction.is_reversal) continue
+    if (transaction.voided_at || transaction.is_reversal || transaction.legacy_incomplete) continue
 
     if (transaction.type === 'INGRESO') {
       const assetLine = transaction.amount.find(

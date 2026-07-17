@@ -23,8 +23,6 @@ export const getLocalDateInputValue = (date = new Date()): string => {
 export const getLocalMonthInputValue = (date = new Date()): string =>
   getLocalDateInputValue(date).slice(0, 7)
 
-export const dateInputToIso = (date: string): string => `${date}T12:00:00-05:00`
-
 export const parseCurrencyInput = (value: string): number => {
   const normalized = value.replace(/\s/g, '').replace(/\./g, '').replace(',', '.')
   const parsed = Number.parseFloat(normalized)
@@ -41,7 +39,7 @@ export const getMonthBounds = (monthValue: string): { start: string; end: string
   const [year, month] = monthValue.split('-').map(Number)
   const lastDay = new Date(year, month, 0).getDate()
   return {
-    start: `${year}-${String(month).padStart(2, '0')}-01T00:00:00-05:00`,
-    end: `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}T23:59:59-05:00`,
+    start: `${year}-${String(month).padStart(2, '0')}-01`,
+    end: `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
   }
 }

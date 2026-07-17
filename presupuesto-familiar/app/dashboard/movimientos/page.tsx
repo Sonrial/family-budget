@@ -75,8 +75,8 @@ export default function MovementsPage() {
         if (monthFilter !== 'ALL') {
           const [year, month] = monthFilter.split('-').map(Number)
           const lastDay = new Date(year, month, 0).getDate()
-          query = query.gte('date', `${monthFilter}-01T00:00:00-05:00`)
-            .lte('date', `${monthFilter}-${String(lastDay).padStart(2, '0')}T23:59:59-05:00`)
+          query = query.gte('date', `${monthFilter}-01`)
+            .lte('date', `${monthFilter}-${String(lastDay).padStart(2, '0')}`)
         }
 
         const { data, error } = await query.returns<HistoryTransaction[]>()
@@ -132,13 +132,20 @@ export default function MovementsPage() {
           <Table>
             <TableHeader><TableRow><TableHead>Movimiento</TableHead><TableHead className="hidden md:table-cell">Fecha</TableHead><TableHead className="hidden sm:table-cell">Tipo</TableHead><TableHead className="text-right">Monto</TableHead><TableHead><span className="sr-only">Abrir</span></TableHead></TableRow></TableHeader>
             <TableBody>{transactions.map((transaction) => {
-              const amount = Math.abs(Number(transaction.lines.find((line) => Number(line.amount) > 0)?.amount ?? 0))
+              const representativeLine = transaction.lines.find((line) => Number(line.amount) > 0)
+                ?? transaction.lines.find((line) => Number(line.amount) !== 0)
+              const amount = Math.abs(Number(representativeLine?.amount ?? 0))
               const Icon = typeIcons[transaction.type]
+              const status = transaction.legacy_incomplete
+                ? { label: 'Histórico incompleto', variant: 'outline' as const }
+                : transaction.voided_at
+                  ? { label: 'Anulado', variant: 'destructive' as const }
+                  : { label: typeLabels[transaction.type], variant: 'secondary' as const }
               return (
                 <TableRow key={transaction.id} className={transaction.voided_at ? 'opacity-60' : undefined}>
                   <TableCell><div className="flex items-center gap-3"><span className="flex size-9 items-center justify-center rounded-lg bg-muted"><Icon className="size-4" /></span><div><p className="font-medium">{transaction.description}</p><p className="text-xs text-muted-foreground md:hidden">{formatDate(transaction.date)}</p></div></div></TableCell>
                   <TableCell className="hidden md:table-cell">{formatDate(transaction.date)}</TableCell>
-                  <TableCell className="hidden sm:table-cell"><Badge variant={transaction.voided_at ? 'destructive' : 'secondary'}>{transaction.voided_at ? 'Anulado' : typeLabels[transaction.type]}</Badge></TableCell>
+                  <TableCell className="hidden sm:table-cell"><Badge variant={status.variant}>{status.label}</Badge></TableCell>
                   <TableCell className="metric-value text-right font-semibold">{formatCurrency(amount)}</TableCell>
                   <TableCell className="w-12"><Button variant="ghost" size="icon-sm" asChild><Link href={`/dashboard/movimiento/${transaction.id}`} aria-label={`Abrir ${transaction.description}`}><ArrowRight /></Link></Button></TableCell>
                 </TableRow>

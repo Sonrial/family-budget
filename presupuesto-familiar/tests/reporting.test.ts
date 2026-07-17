@@ -38,4 +38,15 @@ describe('monthly reporting', () => {
     }
     expect(buildMonthlyReport([transaction]).kpis.expense).toBe(0)
   })
+
+  it('conserva pero excluye movimientos históricos incompletos', () => {
+    const transaction: ReportTransaction = {
+      ...base,
+      type: 'GASTO',
+      legacy_incomplete: true,
+      legacy_difference: -100,
+      amount: [{ amount: 100, account: { name: 'Otros', type: 'EXPENSE' } }],
+    }
+    expect(buildMonthlyReport([transaction]).kpis.expense).toBe(0)
+  })
 })

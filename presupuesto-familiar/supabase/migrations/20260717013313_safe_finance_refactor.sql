@@ -33,7 +33,9 @@ alter table public.transactions
   add column if not exists is_reversal boolean not null default false,
   add column if not exists reversal_of uuid references public.transactions(id),
   add column if not exists corrected_from uuid references public.transactions(id),
-  add column if not exists replaced_by uuid references public.transactions(id);
+  add column if not exists replaced_by uuid references public.transactions(id),
+  add column if not exists legacy_incomplete boolean not null default false,
+  add column if not exists legacy_difference numeric;
 
 alter table public.recurring_bills
   add column if not exists household_id uuid references public.households(id),
@@ -53,13 +55,6 @@ create table if not exists public.recurring_bill_payments (
 alter table public.recurring_bill_payments
   add column if not exists voided_at timestamptz;
 
--- Ampliar los catálogos sin modificar filas existentes.
-alter table public.accounts drop constraint if exists accounts_type_check;
-alter table public.accounts
-  add constraint accounts_type_check
-  check (type in ('ASSET', 'EXPENSE', 'INCOME', 'LIABILITY', 'EQUITY')) not valid;
-alter table public.accounts validate constraint accounts_type_check;
-
 alter table public.transactions drop constraint if exists transactions_type_check;
 alter table public.transactions
   add constraint transactions_type_check
@@ -68,10 +63,14 @@ alter table public.transactions validate constraint transactions_type_check;
 
 create index if not exists accounts_scope_owner_type_idx
   on public.accounts (scope, user_id, type) where archived_at is null;
+create index if not exists accounts_user_id_idx
+  on public.accounts (user_id);
 create index if not exists accounts_household_type_idx
   on public.accounts (household_id, type) where archived_at is null;
 create index if not exists transactions_scope_owner_date_idx
   on public.transactions (scope, created_by, date desc) where is_reversal = false;
+create index if not exists transactions_created_by_idx
+  on public.transactions (created_by);
 create index if not exists transactions_household_date_idx
   on public.transactions (household_id, date desc) where is_reversal = false;
 create index if not exists transaction_lines_account_idx
@@ -80,6 +79,12 @@ create index if not exists transaction_lines_transaction_idx
   on public.transaction_lines (transaction_id);
 create index if not exists recurring_bills_scope_owner_idx
   on public.recurring_bills (scope, created_by) where archived_at is null;
+create index if not exists recurring_bills_created_by_idx
+  on public.recurring_bills (created_by);
+create index if not exists recurring_bills_category_id_idx
+  on public.recurring_bills (category_id);
+create index if not exists household_members_user_id_idx
+  on public.household_members (user_id);
 create unique index if not exists recurring_bill_payments_transaction_uidx
   on public.recurring_bill_payments (transaction_id);
 
@@ -119,6 +124,35 @@ begin
   end if;
 end
 $$;
+
+-- La historia anterior se preserva exactamente como fue registrada. Marcamos
+-- los asientos sin dos líneas o cuya suma no es cero para excluirlos de los
+-- indicadores y evitar que una corrección automática invente contrapartidas.
+with ledger as (
+  select
+    t.id,
+    count(tl.id) as line_count,
+    round(coalesce(sum(tl.amount), 0), 2) as difference
+  from public.transactions t
+  left join public.transaction_lines tl on tl.transaction_id = t.id
+  group by t.id
+)
+update public.transactions t
+set legacy_incomplete = true,
+    legacy_difference = ledger.difference
+from ledger
+where ledger.id = t.id
+  and (ledger.line_count < 2 or abs(ledger.difference) >= 0.005);
+
+-- Endurecer objetos heredados que ya estaban expuestos por la Data API.
+alter view public.account_balances set (security_invoker = true);
+alter function public.get_user_involved_transaction_ids(uuid)
+  set search_path = public, pg_temp;
+alter function public.handle_new_user()
+  set search_path = public, pg_temp;
+revoke all on function public.get_user_involved_transaction_ids(uuid) from public, anon;
+grant execute on function public.get_user_involved_transaction_ids(uuid) to authenticated;
+revoke all on function public.handle_new_user() from public, anon, authenticated;
 
 create or replace function public.is_household_member(p_household_id uuid)
 returns boolean
@@ -206,7 +240,7 @@ create or replace function public.post_transaction(
   p_notes text,
   p_type text,
   p_scope text,
-  p_date timestamptz,
+  p_date date,
   p_household_id uuid,
   p_lines jsonb
 )
@@ -264,7 +298,8 @@ begin
   insert into public.transactions
     (description, notes, type, scope, date, created_by, household_id)
   values
-    (trim(p_description), nullif(trim(p_notes), ''), p_type, p_scope, p_date,
+    (trim(p_description), nullif(trim(p_notes), ''), p_type,
+     p_scope::public.account_scope, p_date,
      v_user, case when p_scope = 'SHARED' then p_household_id else null end)
   returning id into v_transaction_id;
 
@@ -302,6 +337,7 @@ begin
   where id = p_transaction_id for update;
   if not found then raise exception 'TRANSACTION_NOT_FOUND'; end if;
   if v_tx.voided_at is not null or v_tx.is_reversal then raise exception 'TRANSACTION_ALREADY_VOIDED'; end if;
+  if v_tx.legacy_incomplete then raise exception 'LEGACY_INCOMPLETE'; end if;
   if not (
     (v_tx.scope = 'PERSONAL' and v_tx.created_by = v_user)
     or (v_tx.scope = 'SHARED' and public.is_household_member(v_tx.household_id))
@@ -312,7 +348,8 @@ begin
      is_reversal, reversal_of)
   values
     ('Anulación: ' || v_tx.description, nullif(trim(p_reason), ''), v_tx.type,
-     v_tx.scope, now(), v_user, v_tx.household_id, true, v_tx.id)
+     v_tx.scope, (now() at time zone 'America/Bogota')::date,
+     v_user, v_tx.household_id, true, v_tx.id)
   returning id into v_reversal_id;
 
   insert into public.transaction_lines (transaction_id, account_id, amount)
@@ -334,7 +371,7 @@ $$;
 create or replace function public.correct_transaction(
   p_transaction_id uuid,
   p_notes text,
-  p_date timestamptz,
+  p_date date,
   p_amount numeric
 )
 returns uuid
@@ -350,12 +387,14 @@ declare
   v_replacement_id uuid;
   v_reversal_id uuid;
 begin
+  if v_user is null then raise exception 'AUTH_REQUIRED'; end if;
   if p_amount <= 0 then raise exception 'INVALID_AMOUNT'; end if;
 
   select * into v_tx from public.transactions
   where id = p_transaction_id for update;
   if not found then raise exception 'TRANSACTION_NOT_FOUND'; end if;
   if v_tx.voided_at is not null or v_tx.is_reversal then raise exception 'TRANSACTION_ALREADY_VOIDED'; end if;
+  if v_tx.legacy_incomplete then raise exception 'LEGACY_INCOMPLETE'; end if;
   if not (
     (v_tx.scope = 'PERSONAL' and v_tx.created_by = v_user)
     or (v_tx.scope = 'SHARED' and public.is_household_member(v_tx.household_id))
@@ -423,13 +462,13 @@ begin
 
   insert into public.accounts (name, icon, type, scope, user_id, household_id)
   values (
-    trim(p_name), 'DEU', 'LIABILITY', p_scope, v_user,
+    trim(p_name), 'DEU', 'LIABILITY', p_scope::public.account_scope, v_user,
     case when p_scope = 'SHARED' then p_household_id else null end
   ) returning id into v_account_id;
 
   if p_initial_amount > 0 then
     select id into v_equity_id from public.accounts
-    where type = 'EQUITY' and scope = p_scope and archived_at is null
+    where type = 'EQUITY' and scope = p_scope::public.account_scope and archived_at is null
       and (
         (p_scope = 'PERSONAL' and user_id = v_user)
         or (p_scope = 'SHARED' and household_id = p_household_id)
@@ -439,7 +478,7 @@ begin
     if v_equity_id is null then
       insert into public.accounts (name, icon, type, scope, user_id, household_id)
       values (
-        'Patrimonio inicial', 'PAT', 'EQUITY', p_scope, v_user,
+        'Patrimonio inicial', 'PAT', 'EQUITY', p_scope::public.account_scope, v_user,
         case when p_scope = 'SHARED' then p_household_id else null end
       ) returning id into v_equity_id;
     end if;
@@ -448,7 +487,8 @@ begin
       (description, notes, type, scope, date, created_by, household_id)
     values (
       'Saldo inicial: ' || trim(p_name), 'Asiento de apertura equilibrado',
-      'AJUSTE', p_scope, now(), v_user,
+      'AJUSTE', p_scope::public.account_scope,
+      (now() at time zone 'America/Bogota')::date, v_user,
       case when p_scope = 'SHARED' then p_household_id else null end
     ) returning id into v_transaction_id;
 
@@ -473,6 +513,7 @@ declare
   v_account public.accounts%rowtype;
   v_balance numeric;
 begin
+  if v_user is null then raise exception 'AUTH_REQUIRED'; end if;
   select * into v_account from public.accounts where id = p_account_id for update;
   if not found then raise exception 'ACCOUNT_NOT_FOUND'; end if;
   if not (
@@ -500,6 +541,7 @@ as $$
 declare
   v_user uuid := auth.uid();
 begin
+  if v_user is null then raise exception 'AUTH_REQUIRED'; end if;
   update public.recurring_bills rb
   set archived_at = now(), archived_by = v_user
   where rb.id = p_bill_id and (
@@ -523,6 +565,7 @@ as $$
 declare
   v_user uuid := auth.uid();
 begin
+  if v_user is null then raise exception 'AUTH_REQUIRED'; end if;
   if exists (
     select 1 from public.recurring_bill_payments payment
     where payment.bill_id = p_bill_id
@@ -571,7 +614,7 @@ create or replace function public.post_bill_payment(
   p_notes text,
   p_type text,
   p_scope text,
-  p_date timestamptz,
+  p_date date,
   p_household_id uuid,
   p_lines jsonb
 )
@@ -623,85 +666,103 @@ alter table public.recurring_bill_payments enable row level security;
 
 create policy profiles_select_family on public.profiles for select to authenticated
 using (
-  id = auth.uid() or exists (
+  id = (select auth.uid()) or exists (
     select 1 from public.household_members member
     join public.household_members me on me.household_id = member.household_id
-    where member.user_id = profiles.id and me.user_id = auth.uid()
+    where member.user_id = profiles.id and me.user_id = (select auth.uid())
   )
 );
+create policy profiles_insert_self on public.profiles for insert to authenticated
+with check (id = (select auth.uid()));
 create policy profiles_update_self on public.profiles for update to authenticated
-using (id = auth.uid()) with check (id = auth.uid());
+using (id = (select auth.uid())) with check (id = (select auth.uid()));
 
 create policy households_select_member on public.households for select to authenticated
 using (public.is_household_member(id));
 create policy households_update_owner on public.households for update to authenticated
-using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+using (owner_id = (select auth.uid())) with check (owner_id = (select auth.uid()));
 
 create policy household_members_select_member on public.household_members for select to authenticated
 using (public.is_household_member(household_id));
 create policy household_members_manage_owner on public.household_members for all to authenticated
 using (exists (
-  select 1 from public.households h where h.id = household_id and h.owner_id = auth.uid()
+  select 1 from public.households h
+  where h.id = household_id and h.owner_id = (select auth.uid())
 )) with check (exists (
-  select 1 from public.households h where h.id = household_id and h.owner_id = auth.uid()
+  select 1 from public.households h
+  where h.id = household_id and h.owner_id = (select auth.uid())
 ));
 
 create policy accounts_select_authorized on public.accounts for select to authenticated
 using (
-  (scope = 'PERSONAL' and user_id = auth.uid())
+  (scope = 'PERSONAL' and user_id = (select auth.uid()))
   or (scope = 'SHARED' and public.is_household_member(household_id))
 );
 create policy accounts_insert_authorized on public.accounts for insert to authenticated
 with check (
-  (scope = 'PERSONAL' and user_id = auth.uid() and household_id is null)
-  or (scope = 'SHARED' and public.is_household_member(household_id))
-);
-create policy accounts_update_authorized on public.accounts for update to authenticated
-using (
-  (scope = 'PERSONAL' and user_id = auth.uid())
-  or (scope = 'SHARED' and public.is_household_member(household_id))
-) with check (
-  (scope = 'PERSONAL' and user_id = auth.uid())
-  or (scope = 'SHARED' and public.is_household_member(household_id))
+  user_id = (select auth.uid())
+  and (
+    (scope = 'PERSONAL' and household_id is null)
+    or (scope = 'SHARED' and public.is_household_member(household_id))
+  )
 );
 
 create policy transactions_select_authorized on public.transactions for select to authenticated
 using (
-  (scope = 'PERSONAL' and created_by = auth.uid())
+  (scope = 'PERSONAL' and created_by = (select auth.uid()))
   or (scope = 'SHARED' and public.is_household_member(household_id))
+);
+-- Compatibilidad durante el despliegue: la versión anterior escribía primero
+-- la cabecera y luego las líneas. Esta política se retira tras publicar la UI RPC.
+create policy transactions_insert_transition on public.transactions for insert to authenticated
+with check (
+  created_by = (select auth.uid())
+  and (
+    (scope = 'PERSONAL' and household_id is null)
+    or (scope = 'SHARED' and public.is_household_member(household_id))
+  )
+  and coalesce(is_reversal, false) = false
+  and coalesce(legacy_incomplete, false) = false
 );
 
 create policy transaction_lines_select_authorized on public.transaction_lines for select to authenticated
 using (exists (
   select 1 from public.transactions t where t.id = transaction_id and (
-    (t.scope = 'PERSONAL' and t.created_by = auth.uid())
+    (t.scope = 'PERSONAL' and t.created_by = (select auth.uid()))
     or (t.scope = 'SHARED' and public.is_household_member(t.household_id))
   )
+));
+create policy transaction_lines_insert_transition on public.transaction_lines for insert to authenticated
+with check (exists (
+  select 1 from public.transactions t
+  where t.id = transaction_id
+    and t.created_by = (select auth.uid())
+    and t.voided_at is null
+    and t.is_reversal = false
+    and (
+      (t.scope = 'PERSONAL' and t.household_id is null)
+      or (t.scope = 'SHARED' and public.is_household_member(t.household_id))
+    )
 ));
 
 create policy recurring_bills_select_authorized on public.recurring_bills for select to authenticated
 using (
-  (scope = 'PERSONAL' and created_by = auth.uid())
+  (scope = 'PERSONAL' and created_by = (select auth.uid()))
   or (scope = 'SHARED' and public.is_household_member(household_id))
 );
 create policy recurring_bills_insert_authorized on public.recurring_bills for insert to authenticated
 with check (
-  (scope = 'PERSONAL' and created_by = auth.uid() and household_id is null)
-  or (scope = 'SHARED' and public.is_household_member(household_id))
-);
-create policy recurring_bills_update_authorized on public.recurring_bills for update to authenticated
-using (
-  (scope = 'PERSONAL' and created_by = auth.uid())
-  or (scope = 'SHARED' and public.is_household_member(household_id))
-) with check (
-  (scope = 'PERSONAL' and created_by = auth.uid())
-  or (scope = 'SHARED' and public.is_household_member(household_id))
+  created_by = (select auth.uid())
+  and (
+    (scope = 'PERSONAL' and household_id is null)
+    or (scope = 'SHARED' and public.is_household_member(household_id))
+  )
 );
 
 create policy bill_payments_select_authorized on public.recurring_bill_payments for select to authenticated
 using (exists (
   select 1 from public.recurring_bills rb where rb.id = bill_id and (
-    (rb.scope = 'PERSONAL' and rb.created_by = auth.uid())
+    (rb.scope = 'PERSONAL' and rb.created_by = (select auth.uid()))
     or (rb.scope = 'SHARED' and public.is_household_member(rb.household_id))
   )
 ));
@@ -710,28 +771,42 @@ revoke all on function public.is_household_member(uuid) from public;
 revoke all on function public.get_my_household_id() from public;
 revoke all on function public.get_family_profiles() from public;
 revoke all on function public.get_transfer_destinations(uuid) from public;
-revoke all on function public.post_transaction(text,text,text,text,timestamptz,uuid,jsonb) from public;
+revoke all on function public.post_transaction(text,text,text,text,date,uuid,jsonb) from public;
 revoke all on function public.void_transaction(uuid,text) from public;
-revoke all on function public.correct_transaction(uuid,text,timestamptz,numeric) from public;
+revoke all on function public.correct_transaction(uuid,text,date,numeric) from public;
 revoke all on function public.create_liability_account(text,numeric,text,uuid) from public;
 revoke all on function public.archive_account(uuid) from public;
 revoke all on function public.archive_recurring_bill(uuid) from public;
 revoke all on function public.record_bill_payment(uuid,uuid,date) from public;
-revoke all on function public.post_bill_payment(uuid,date,text,text,text,text,timestamptz,uuid,jsonb) from public;
+revoke all on function public.post_bill_payment(uuid,date,text,text,text,text,date,uuid,jsonb) from public;
 
 grant execute on function public.is_household_member(uuid) to authenticated;
 grant execute on function public.get_my_household_id() to authenticated;
 grant execute on function public.get_family_profiles() to authenticated;
 grant execute on function public.get_transfer_destinations(uuid) to authenticated;
-grant execute on function public.post_transaction(text,text,text,text,timestamptz,uuid,jsonb) to authenticated;
+grant execute on function public.post_transaction(text,text,text,text,date,uuid,jsonb) to authenticated;
 grant execute on function public.void_transaction(uuid,text) to authenticated;
-grant execute on function public.correct_transaction(uuid,text,timestamptz,numeric) to authenticated;
+grant execute on function public.correct_transaction(uuid,text,date,numeric) to authenticated;
 grant execute on function public.create_liability_account(text,numeric,text,uuid) to authenticated;
 grant execute on function public.archive_account(uuid) to authenticated;
 grant execute on function public.archive_recurring_bill(uuid) to authenticated;
 grant execute on function public.record_bill_payment(uuid,uuid,date) to authenticated;
-grant execute on function public.post_bill_payment(uuid,date,text,text,text,text,timestamptz,uuid,jsonb) to authenticated;
+grant execute on function public.post_bill_payment(uuid,date,text,text,text,text,date,uuid,jsonb) to authenticated;
 
+revoke all on table public.profiles, public.households, public.household_members,
+  public.accounts, public.transactions, public.transaction_lines,
+  public.recurring_bills, public.recurring_bill_payments,
+  public.account_balances, public.account_balances_v2 from anon;
+
+grant select, insert, update on public.profiles to authenticated;
+grant select, update on public.households to authenticated;
+grant select, insert, update, delete on public.household_members to authenticated;
+grant select, insert on public.accounts to authenticated;
+grant select, insert on public.transactions to authenticated;
+grant select, insert on public.transaction_lines to authenticated;
+grant select, insert on public.recurring_bills to authenticated;
+grant select on public.recurring_bill_payments to authenticated;
+grant select on public.account_balances to authenticated;
 grant select on public.account_balances_v2 to authenticated;
 
 commit;

@@ -43,6 +43,8 @@ export interface Transaction {
   household_id: string | null
   voided_at?: string | null
   is_reversal?: boolean
+  legacy_incomplete?: boolean
+  legacy_difference?: number | null
   created_by_profile?: Pick<Profile, 'email'> | null
   lines?: TransactionLine[]
   transaction_lines?: TransactionLine[]

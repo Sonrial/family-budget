@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { getFinanceContext, getFinanceErrorMessage, postTransaction } from '@/lib/finance'
 import {
-  dateInputToIso, formatCurrencyInput, getLocalDateInputValue,
+  formatCurrencyInput, getLocalDateInputValue,
   getLocalMonthInputValue, parseCurrencyInput,
 } from '@/lib/formatters'
 import { getBrowserClient } from '@/lib/supabase/client'
@@ -175,7 +175,7 @@ function TransactionForm() {
         notes,
         type,
         scope: finalScope,
-        date: dateInputToIso(date),
+        date,
         householdId: finalScope === 'SHARED' ? context.householdId : null,
         lines,
         billId,

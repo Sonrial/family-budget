@@ -12,12 +12,13 @@ Aplicación familiar de contabilidad por partida doble construida con Next.js y 
 - La información familiar queda aislada por hogar mediante Row Level Security (RLS).
 - La interfaz es adaptable a móvil, accesible y consistente.
 - Hay pruebas automáticas para partida doble, fechas y reportes.
+- Los asientos históricos incompletos se conservan sin inventar contrapartidas y quedan señalados para revisión.
 
 ## Requisitos
 
 - Node.js 20.9 o superior.
 - npm 10 o superior.
-- Un proyecto de Supabase de respaldo o desarrollo.
+- Acceso autorizado al proyecto de Supabase.
 - Para probar migraciones localmente: Supabase CLI y Docker Desktop.
 
 ## Instalación segura
@@ -40,9 +41,9 @@ Abra `http://localhost:3000`.
 
 ## Base de datos
 
-La migración está en `supabase/migrations/202607160001_safe_finance_refactor.sql`. Es aditiva: conserva los movimientos existentes, añade hogares, auditoría, pagos de obligaciones y operaciones contables atómicas.
+Las migraciones versionadas están en `supabase/migrations/`. La primera crea una copia privada de las tablas financieras y la segunda aplica el cambio aditivo: conserva los movimientos existentes, añade hogares, auditoría, pagos de obligaciones y operaciones contables atómicas.
 
-No la ejecute directamente sobre producción. Siga primero la guía [Respaldo y migración segura](docs/SUPABASE_BACKUP_AND_MIGRATION.md), aplíquela sobre una copia y ejecute `supabase/verification/after_migration_checks.sql`.
+Antes de aplicarlas siga la guía [Respaldo y migración segura](docs/SUPABASE_BACKUP_AND_MIGRATION.md) y después ejecute `supabase/verification/after_migration_checks.sql`.
 
 ## Comandos
 

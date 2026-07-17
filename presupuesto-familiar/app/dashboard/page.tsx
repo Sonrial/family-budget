@@ -158,7 +158,9 @@ export default function DashboardPage() {
                           <span className="block truncate text-sm font-medium">{transaction.description}</span>
                           <span className="block text-xs text-muted-foreground">{formatDate(transaction.date)} · {transaction.created_by_profile?.email?.split('@')[0] ?? 'Usuario'}</span>
                         </span>
-                        <Badge variant={transaction.voided_at ? 'destructive' : 'secondary'}>{transaction.voided_at ? 'Anulado' : meta.label}</Badge>
+                        <Badge variant={transaction.voided_at ? 'destructive' : transaction.legacy_incomplete ? 'outline' : 'secondary'}>
+                          {transaction.voided_at ? 'Anulado' : transaction.legacy_incomplete ? 'Incompleto' : meta.label}
+                        </Badge>
                       </Link>
                     )
                   })}

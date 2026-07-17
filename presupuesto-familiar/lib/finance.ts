@@ -56,6 +56,7 @@ const errorMessages: Record<string, string> = {
   BILL_ACCESS_DENIED: 'No tienes permiso para modificar este pago recurrente.',
   HOUSEHOLD_ACCESS_DENIED: 'No perteneces al hogar seleccionado.',
   INVALID_OR_INACCESSIBLE_ACCOUNT: 'Una de las cuentas no existe, está archivada o no es accesible.',
+  LEGACY_INCOMPLETE: 'Este movimiento histórico está incompleto y debe regularizarse con una revisión contable guiada.',
   TRANSACTION_ALREADY_VOIDED: 'Este movimiento ya fue anulado o reemplazado.',
   TRANSACTION_ACCESS_DENIED: 'No tienes permiso para modificar este movimiento.',
   UNBALANCED_TRANSACTION: 'El asiento no está equilibrado. Los débitos y créditos deben sumar cero.',

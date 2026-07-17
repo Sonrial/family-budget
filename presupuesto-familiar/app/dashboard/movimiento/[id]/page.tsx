@@ -3,7 +3,7 @@
 import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, Loader2, Save, Undo2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, Loader2, Save, Undo2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { LoadingState } from '@/components/finance/states'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { getFinanceErrorMessage } from '@/lib/finance'
-import { dateInputToIso, formatCurrency, formatCurrencyInput, parseCurrencyInput } from '@/lib/formatters'
+import { formatCurrency, formatCurrencyInput, parseCurrencyInput } from '@/lib/formatters'
 import { getBrowserClient } from '@/lib/supabase/client'
 import type { Transaction, TransactionLine } from '@/lib/types'
 
@@ -43,12 +43,13 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
           .select('*, transaction_lines(*, account:accounts(id,name,icon,type))')
           .eq('id', id).single<DetailedTransaction>()
         if (error) throw error
-        const positiveLine = data.transaction_lines.find((line) => Number(line.amount) > 0)
+        const representativeLine = data.transaction_lines.find((line) => Number(line.amount) > 0)
+          ?? data.transaction_lines.find((line) => Number(line.amount) !== 0)
         if (!cancelled) {
           setTransaction(data)
           setNotes(data.notes ?? '')
           setDate(data.date.slice(0, 10))
-          setAmount(formatCurrencyInput(String(positiveLine?.amount ?? '')))
+          setAmount(formatCurrencyInput(String(Math.abs(Number(representativeLine?.amount ?? 0)))))
           setLoading(false)
         }
       } catch (error) {
@@ -63,6 +64,10 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
   }, [id, router])
 
   const correctTransaction = async () => {
+    if (transaction?.legacy_incomplete) {
+      toast.error('Este movimiento histórico necesita una regularización contable guiada.')
+      return
+    }
     const numericAmount = parseCurrencyInput(amount)
     if (numericAmount <= 0 || !date) { toast.error('Ingresa un monto y una fecha válidos.'); return }
     setSaving(true)
@@ -70,7 +75,7 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
       const { data, error } = await getBrowserClient().rpc('correct_transaction', {
         p_transaction_id: id,
         p_notes: notes,
-        p_date: dateInputToIso(date),
+        p_date: date,
         p_amount: numericAmount,
       })
       if (error) throw error
@@ -84,6 +89,10 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
   }
 
   const voidTransaction = async () => {
+    if (transaction?.legacy_incomplete) {
+      toast.error('Este movimiento histórico necesita una regularización contable guiada.')
+      return
+    }
     try {
       const { error } = await getBrowserClient().rpc('void_transaction', {
         p_transaction_id: id,
@@ -100,17 +109,21 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
   const positiveLine = transaction.transaction_lines.find((line) => Number(line.amount) > 0)
   const negativeLine = transaction.transaction_lines.find((line) => Number(line.amount) < 0)
   const isVoided = Boolean(transaction.voided_at)
+  const isLegacyIncomplete = Boolean(transaction.legacy_incomplete)
 
   return (
     <div className="mx-auto max-w-2xl space-y-5">
       <Button variant="ghost" asChild><Link href="/dashboard/movimientos"><ArrowLeft /> Volver al historial</Link></Button>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h1 className="text-2xl font-bold tracking-tight">{transaction.description}</h1><p className="mt-1 text-sm text-muted-foreground">Detalle y trazabilidad del asiento.</p></div>
-        <Badge variant={isVoided ? 'destructive' : 'secondary'}>{isVoided ? 'Anulado' : transaction.type}</Badge>
+        <Badge variant={isVoided ? 'destructive' : isLegacyIncomplete ? 'outline' : 'secondary'}>
+          {isVoided ? 'Anulado' : isLegacyIncomplete ? 'Histórico incompleto' : transaction.type}
+        </Badge>
       </div>
 
       {isVoided && <Alert variant="destructive"><Undo2 /><AlertTitle>Movimiento anulado</AlertTitle><AlertDescription>El registro permanece como evidencia y un asiento reverso neutralizó sus saldos.</AlertDescription></Alert>}
-      {!isVoided && <Alert><CheckCircle2 /><AlertTitle>Correcciones con trazabilidad</AlertTitle><AlertDescription>Cambiar el monto crea una reversión y un asiento nuevo; nunca sobrescribe el historial original.</AlertDescription></Alert>}
+      {isLegacyIncomplete && <Alert><AlertTriangle /><AlertTitle>Registro histórico incompleto</AlertTitle><AlertDescription>Se conservó exactamente como estaba para no alterar tus saldos. No participa en los indicadores ni se puede corregir automáticamente hasta identificar su contrapartida.</AlertDescription></Alert>}
+      {!isVoided && !isLegacyIncomplete && <Alert><CheckCircle2 /><AlertTitle>Correcciones con trazabilidad</AlertTitle><AlertDescription>Cambiar el monto crea una reversión y un asiento nuevo; nunca sobrescribe el historial original.</AlertDescription></Alert>}
 
       <Card>
         <CardHeader><CardTitle>Asiento contable</CardTitle><CardDescription>Origen y destino registrados.</CardDescription></CardHeader>
@@ -128,14 +141,14 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
       <Card>
         <CardHeader><CardTitle>Corrección</CardTitle><CardDescription>Disponible mientras el movimiento esté activo.</CardDescription></CardHeader>
         <CardContent className="grid gap-5 sm:grid-cols-2">
-          <div className="space-y-2"><Label htmlFor="amount">Monto</Label><Input id="amount" inputMode="decimal" value={amount} disabled={isVoided} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.,]/g, ''))} onBlur={() => setAmount(formatCurrencyInput(amount))} /></div>
-          <div className="space-y-2"><Label htmlFor="date">Fecha</Label><Input id="date" type="date" value={date} disabled={isVoided} onChange={(event) => setDate(event.target.value)} /></div>
-          <div className="space-y-2 sm:col-span-2"><Label htmlFor="notes">Notas</Label><Textarea id="notes" value={notes} disabled={isVoided} onChange={(event) => setNotes(event.target.value)} /></div>
-          <Button className="sm:col-span-2" onClick={correctTransaction} disabled={saving || isVoided}>{saving ? <Loader2 className="animate-spin" /> : <Save />}{saving ? 'Guardando corrección…' : 'Guardar como corrección'}</Button>
+          <div className="space-y-2"><Label htmlFor="amount">Monto</Label><Input id="amount" inputMode="decimal" value={amount} disabled={isVoided || isLegacyIncomplete} onChange={(event) => setAmount(event.target.value.replace(/[^0-9.,]/g, ''))} onBlur={() => setAmount(formatCurrencyInput(amount))} /></div>
+          <div className="space-y-2"><Label htmlFor="date">Fecha</Label><Input id="date" type="date" value={date} disabled={isVoided || isLegacyIncomplete} onChange={(event) => setDate(event.target.value)} /></div>
+          <div className="space-y-2 sm:col-span-2"><Label htmlFor="notes">Notas</Label><Textarea id="notes" value={notes} disabled={isVoided || isLegacyIncomplete} onChange={(event) => setNotes(event.target.value)} /></div>
+          <Button className="sm:col-span-2" onClick={correctTransaction} disabled={saving || isVoided || isLegacyIncomplete}>{saving ? <Loader2 className="animate-spin" /> : <Save />}{saving ? 'Guardando corrección…' : 'Guardar como corrección'}</Button>
         </CardContent>
       </Card>
 
-      {!isVoided && (
+      {!isVoided && !isLegacyIncomplete && (
         <Card className="border-destructive/30">
           <CardHeader><CardTitle className="text-destructive">Anular movimiento</CardTitle><CardDescription>Conserva el registro y crea automáticamente su reversión.</CardDescription></CardHeader>
           <CardContent>
