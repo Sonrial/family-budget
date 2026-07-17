@@ -1,5 +1,5 @@
 -- Presupuesto Familiar - migración segura y aditiva
--- Aplicar primero en un proyecto Supabase de respaldo.
+-- Aplicar únicamente después de verificar la migración de copia anterior.
 -- No elimina movimientos, líneas, cuentas ni pagos existentes.
 
 begin;
