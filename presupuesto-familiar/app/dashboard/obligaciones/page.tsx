@@ -1,314 +1,177 @@
 'use client'
+
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase'
-import { Plus, Trash2, Wallet, CreditCard, AlertCircle, Loader2 } from 'lucide-react'
-import { useRouter } from 'next/navigation'
-import { formatCurrency } from '@/lib/formatters'
+import Link from 'next/link'
+import { Archive, CalendarClock, CheckCircle2, CreditCard, Plus } from 'lucide-react'
+import { toast } from 'sonner'
+import { PageHeader } from '@/components/finance/page-header'
+import { ScopeToggle } from '@/components/finance/scope-toggle'
+import { EmptyState, LoadingState } from '@/components/finance/states'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { getFinanceContext, getFinanceErrorMessage } from '@/lib/finance'
+import { formatCurrency, getLocalMonthInputValue, parseCurrencyInput } from '@/lib/formatters'
+import { getBrowserClient } from '@/lib/supabase/client'
+import type { Account, AccountBalance, FinanceContext, RecurringBill, ScopeType } from '@/lib/types'
 
-export default function ObligacionesPage() {
-  const supabase = createClient()
-  const router   = useRouter()
+export default function ObligationsPage() {
+  const [scope, setScope] = useState<ScopeType>('PERSONAL')
+  const [context, setContext] = useState<FinanceContext | null>(null)
+  const [debts, setDebts] = useState<AccountBalance[]>([])
+  const [bills, setBills] = useState<RecurringBill[]>([])
+  const [categories, setCategories] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
-  const [scope, setScope]     = useState('PERSONAL')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [debtDialog, setDebtDialog] = useState(false)
+  const [debtName, setDebtName] = useState('')
+  const [debtAmount, setDebtAmount] = useState('')
+  const [billDraft, setBillDraft] = useState({ title: '', amount: '', payDay: '', categoryId: '' })
+  const currentPeriod = `${getLocalMonthInputValue()}-01`
 
-  const [debts, setDebts]           = useState<any[]>([])
-  const [bills, setBills]           = useState<any[]>([])
-  const [categories, setCategories] = useState<any[]>([])
-  const [newBill, setNewBill]       = useState({ title: '', amount: '', pay_day: '', category_id: '' })
+  useEffect(() => {
+    let cancelled = false
+    async function loadObligations() {
+      try {
+        const client = getBrowserClient()
+        const nextContext = await getFinanceContext(client)
+        if (scope === 'SHARED' && !nextContext.householdId) {
+          if (!cancelled) {
+            setContext(nextContext)
+            setDebts([])
+            setBills([])
+            setCategories([])
+            setLoading(false)
+          }
+          return
+        }
+        const ownerColumn = scope === 'PERSONAL' ? 'user_id' : 'household_id'
+        const ownerId = scope === 'PERSONAL' ? nextContext.userId : nextContext.householdId
+        const createdColumn = scope === 'PERSONAL' ? 'created_by' : 'household_id'
 
-  // Modal nueva deuda
-  const [debtModal, setDebtModal] = useState(false)
-  const [newDebt, setNewDebt]     = useState({ name: '', amount: '' })
-
-  const fetchData = async () => {
-    setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    let debtQuery = supabase.from('account_balances').select('*').eq('type', 'LIABILITY').eq('scope', scope)
-    if (scope === 'PERSONAL') debtQuery = debtQuery.eq('user_id', user.id)
-    let billQuery = supabase.from('recurring_bills').select('*, category:accounts(name, icon)').eq('scope', scope)
-    if (scope === 'PERSONAL') billQuery = billQuery.eq('created_by', user.id)
-    let catQuery = supabase.from('accounts').select('*').eq('type', 'EXPENSE').eq('scope', scope)
-    if (scope === 'PERSONAL') catQuery = catQuery.eq('user_id', user.id)
-    const [{ data: d }, { data: b }, { data: c }] = await Promise.all([debtQuery, billQuery, catQuery])
-    setDebts(d || []); setBills(b || []); setCategories(c || [])
-    setLoading(false)
-  }
-
-  useEffect(() => { fetchData() }, [scope])
+        const [debtResult, billResult, categoryResult] = await Promise.all([
+          client.from('account_balances_v2').select('*').eq('type', 'LIABILITY').eq('scope', scope)
+            .eq(ownerColumn, ownerId).is('archived_at', null).order('name').returns<AccountBalance[]>(),
+          client.from('recurring_bills').select('*, category:accounts(name,icon), payments:recurring_bill_payments(period,transaction_id,voided_at)')
+            .eq('scope', scope).eq(createdColumn, ownerId).is('archived_at', null).order('pay_day').returns<RecurringBill[]>(),
+          client.from('accounts').select('*').eq('type', 'EXPENSE').eq('scope', scope)
+            .eq(ownerColumn, ownerId).is('archived_at', null).order('name').returns<Account[]>(),
+        ])
+        if (debtResult.error) throw debtResult.error
+        if (billResult.error) throw billResult.error
+        if (categoryResult.error) throw categoryResult.error
+        if (!cancelled) {
+          setContext(nextContext)
+          setDebts(debtResult.data ?? [])
+          setBills(billResult.data ?? [])
+          setCategories(categoryResult.data ?? [])
+          setLoading(false)
+        }
+      } catch (error) {
+        if (!cancelled) { toast.error(getFinanceErrorMessage(error)); setLoading(false) }
+      }
+    }
+    void loadObligations()
+    return () => { cancelled = true }
+  }, [refreshKey, scope, currentPeriod])
 
   const createDebt = async () => {
-    if (!newDebt.name) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: account, error } = await supabase.from('accounts').insert({
-      name: newDebt.name, type: 'LIABILITY', scope, user_id: user.id, icon: '📉'
-    }).select().single()
-    if (error) return
-    const initialAmount = parseFloat(newDebt.amount || '0')
-    if (initialAmount > 0) {
-      const { data: tx } = await supabase.from('transactions').insert({
-        description: 'Saldo Inicial Deuda', scope, created_by: user.id, date: new Date().toISOString()
-      }).select().single()
-      if (tx) await supabase.from('transaction_lines').insert({ transaction_id: tx.id, account_id: account.id, amount: -initialAmount })
-    }
-    setNewDebt({ name: '', amount: '' }); setDebtModal(false); fetchData()
+    if (!context || !debtName.trim()) return
+    try {
+      const { error } = await getBrowserClient().rpc('create_liability_account', {
+        p_name: debtName.trim(), p_initial_amount: parseCurrencyInput(debtAmount),
+        p_scope: scope, p_household_id: scope === 'SHARED' ? context.householdId : null,
+      })
+      if (error) throw error
+      setDebtName(''); setDebtAmount(''); setDebtDialog(false); setRefreshKey((key) => key + 1)
+      toast.success('Deuda creada con un asiento inicial equilibrado.')
+    } catch (error) { toast.error(getFinanceErrorMessage(error)) }
   }
 
   const createBill = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!newBill.title || !newBill.amount || !newBill.category_id) return
-    await supabase.from('recurring_bills').insert({
-      title: newBill.title, amount: newBill.amount,
-      pay_day: parseInt(newBill.pay_day), category_id: newBill.category_id,
-      scope, created_by: user?.id
-    })
-    setNewBill({ title: '', amount: '', pay_day: '', category_id: '' }); fetchData()
+    if (!context || !billDraft.title.trim() || !billDraft.categoryId) return
+    const amount = parseCurrencyInput(billDraft.amount)
+    const payDay = Number.parseInt(billDraft.payDay, 10)
+    if (amount <= 0 || payDay < 1 || payDay > 31) { toast.error('Ingresa un monto y un día entre 1 y 31.'); return }
+    try {
+      const { error } = await getBrowserClient().from('recurring_bills').insert({
+        title: billDraft.title.trim(), amount, pay_day: payDay,
+        category_id: billDraft.categoryId, scope, created_by: context.userId,
+        household_id: scope === 'SHARED' ? context.householdId : null,
+      })
+      if (error) throw error
+      setBillDraft({ title: '', amount: '', payDay: '', categoryId: '' })
+      setRefreshKey((key) => key + 1)
+      toast.success('Pago recurrente creado.')
+    } catch (error) { toast.error(getFinanceErrorMessage(error)) }
   }
 
-  const deleteDebt = async (id: string) => {
-    await supabase.from('accounts').delete().eq('id', id); fetchData()
-  }
-  const deleteBill = async (id: string) => {
-    await supabase.from('recurring_bills').delete().eq('id', id); fetchData()
-  }
-  const payDebt = (debt: any) => {
-    router.push(`/dashboard/transaccion?${new URLSearchParams({ desc: `Abono a ${debt.name}`, cat: debt.id, scope: debt.scope, type: 'GASTO' })}`)
-  }
-  const payBill = (bill: any) => {
-    router.push(`/dashboard/transaccion?${new URLSearchParams({ desc: bill.title, amount: bill.amount, cat: bill.category_id, scope: bill.scope, type: 'GASTO' })}`)
+  const archive = async (kind: 'account' | 'bill', id: string) => {
+    try {
+      const functionName = kind === 'account' ? 'archive_account' : 'archive_recurring_bill'
+      const params = kind === 'account' ? { p_account_id: id } : { p_bill_id: id }
+      const { error } = await getBrowserClient().rpc(functionName, params)
+      if (error) throw error
+      setRefreshKey((key) => key + 1)
+      toast.success('Elemento archivado; el historial permanece intacto.')
+    } catch (error) { toast.error(getFinanceErrorMessage(error)) }
   }
 
-  const inputStyle: React.CSSProperties = {
-    padding: '9px 12px', borderRadius: '9px', border: '1px solid #e2e8f0',
-    fontSize: '13px', outline: 'none', background: 'white', color: '#1e293b',
-    width: '100%', boxSizing: 'border-box'
-  }
-  const cardStyle: React.CSSProperties = {
-    background: 'white', borderRadius: '20px', border: '1px solid #e2e8f0',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden'
-  }
+  const changeScope = (next: ScopeType) => { setLoading(true); setScope(next) }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '40px' }}>
-
-      {/* ── ENCABEZADO ── */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h2 style={{ fontSize: '26px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.5px' }}>
-            Obligaciones
-          </h2>
-          <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '3px' }}>Deudas y pagos recurrentes</p>
-        </div>
-        {/* Tabs scope */}
-        <div style={{ display: 'inline-flex', gap: '4px', background: '#f1f5f9', borderRadius: '12px', padding: '4px' }}>
-          {[{ v: 'PERSONAL', label: '👤 Personal' }, { v: 'SHARED', label: '🏠 Familiar' }].map(({ v, label }) => (
-            <button key={v} onClick={() => setScope(v)} style={{
-              padding: '7px 18px', borderRadius: '9px', border: 'none', cursor: 'pointer',
-              fontSize: '13px', fontWeight: 600, transition: 'all 0.15s',
-              background: scope === v ? 'white' : 'transparent',
-              color: scope === v ? '#2563eb' : '#64748b',
-              boxShadow: scope === v ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
-            }}>{label}</button>
-          ))}
-        </div>
-      </div>
-
-      {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '80px', color: '#94a3b8' }}>
-          <Loader2 size={32} style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} />
-        </div>
-      ) : (<>
-
-        {/* ── SECCIÓN DEUDAS ── */}
-        <div style={cardStyle}>
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '20px 24px', borderBottom: '1px solid #f1f5f9'
-          }}>
-            <div>
-              <p style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a', margin: 0 }}>Mis Deudas</p>
-              <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>Pasivos activos y saldos pendientes</p>
+    <div className="space-y-6">
+      <PageHeader title="Deudas y pagos" description="Controla obligaciones sin mezclar abonos de capital con gastos de consumo." actions={<ScopeToggle value={scope} onChange={changeScope} />} />
+      {loading ? <LoadingState /> : (
+        <>
+          <section className="space-y-3">
+            <div className="flex items-center justify-between"><h2 className="text-lg font-semibold">Deudas</h2>
+              <Dialog open={debtDialog} onOpenChange={setDebtDialog}>
+                <DialogTrigger asChild><Button size="sm"><Plus /> Nueva deuda</Button></DialogTrigger>
+                <DialogContent><DialogHeader><DialogTitle>Nueva deuda</DialogTitle><DialogDescription>El saldo inicial se compensará contra patrimonio inicial para conservar la doble partida.</DialogDescription></DialogHeader>
+                  <div className="space-y-4"><div className="space-y-2"><Label htmlFor="debt-name">Nombre</Label><Input id="debt-name" value={debtName} onChange={(event) => setDebtName(event.target.value)} placeholder="Ej. Crédito del vehículo" /></div><div className="space-y-2"><Label htmlFor="debt-amount">Saldo inicial</Label><Input id="debt-amount" inputMode="decimal" value={debtAmount} onChange={(event) => setDebtAmount(event.target.value)} placeholder="0" /></div></div>
+                  <DialogFooter><Button variant="outline" onClick={() => setDebtDialog(false)}>Cancelar</Button><Button onClick={createDebt}>Crear deuda</Button></DialogFooter>
+                </DialogContent>
+              </Dialog>
             </div>
-            <button onClick={() => setDebtModal(true)} style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca',
-              borderRadius: '9px', padding: '8px 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer'
-            }}>
-              <Plus size={14} /> Agregar deuda
-            </button>
-          </div>
-
-          <div style={{ padding: '20px 24px' }}>
-            {debts.length === 0 ? (
-              <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '14px', padding: '24px 0' }}>
-                🎉 ¡Sin deudas registradas!
-              </p>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '14px' }}>
-                {debts.map((d: any) => (
-                  <div key={d.id} style={{
-                    background: '#fff9f9', border: '1px solid #fecaca',
-                    borderRadius: '14px', padding: '18px',
-                    display: 'flex', flexDirection: 'column', gap: '12px'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <p style={{ fontWeight: 700, color: '#1e293b', fontSize: '14px', margin: 0 }}>{d.icon} {d.name}</p>
-                        <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>Saldo pendiente</p>
-                      </div>
-                      <button onClick={() => deleteDebt(d.id)} style={{
-                        background: 'none', border: 'none', cursor: 'pointer', color: '#fca5a5', padding: '2px'
-                      }}>
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                    <p style={{ fontSize: '22px', fontWeight: 800, color: '#dc2626', margin: 0, letterSpacing: '-0.5px' }}>
-                      {formatCurrency(d.current_balance)}
-                    </p>
-                    <button onClick={() => payDebt(d)} style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
-                      background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe',
-                      borderRadius: '9px', padding: '9px', fontSize: '12px', fontWeight: 700, cursor: 'pointer'
-                    }}>
-                      <Wallet size={14} /> Abonar capital
-                    </button>
-                  </div>
-                ))}
-              </div>
+            {debts.length === 0 ? <EmptyState icon={CreditCard} title="Sin deudas activas" description="Cuando registres una obligación aparecerá aquí." /> : (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{debts.map((debt) => (
+                <Card key={debt.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{debt.name}</CardTitle><CardDescription>Saldo pendiente</CardDescription></div><ArchiveAction name={debt.name} onConfirm={() => archive('account', debt.id)} /></div></CardHeader><CardContent><p className="metric-value text-2xl font-bold text-red-600">{formatCurrency(Math.abs(Number(debt.current_balance)))}</p><Button asChild className="mt-4 w-full" variant="outline"><Link href={`/dashboard/transaccion?${new URLSearchParams({ desc: `Abono a ${debt.name}`, cat: debt.id, scope: debt.scope, type: 'GASTO' })}`}>Registrar abono</Link></Button></CardContent></Card>
+              ))}</div>
             )}
-          </div>
-        </div>
+          </section>
 
-        {/* ── SECCIÓN PAGOS RECURRENTES ── */}
-        <div style={cardStyle}>
-          <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9' }}>
-            <p style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a', margin: 0 }}>Pagos Recurrentes</p>
-            <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>Suscripciones y servicios fijos del mes</p>
-          </div>
+          <section className="space-y-3"><h2 className="text-lg font-semibold">Pagos recurrentes</h2>
+            <Card><CardHeader><CardTitle>Agregar pago recurrente</CardTitle><CardDescription>Configura el recordatorio y la categoría contable.</CardDescription></CardHeader><CardContent className="grid gap-3 md:grid-cols-[1.2fr_1fr_100px_1fr_auto] md:items-end">
+              <div className="space-y-2"><Label htmlFor="bill-title">Nombre</Label><Input id="bill-title" value={billDraft.title} onChange={(event) => setBillDraft({ ...billDraft, title: event.target.value })} placeholder="Ej. Internet" /></div>
+              <div className="space-y-2"><Label htmlFor="bill-amount">Monto</Label><Input id="bill-amount" inputMode="decimal" value={billDraft.amount} onChange={(event) => setBillDraft({ ...billDraft, amount: event.target.value })} /></div>
+              <div className="space-y-2"><Label htmlFor="bill-day">Día</Label><Input id="bill-day" type="number" min={1} max={31} value={billDraft.payDay} onChange={(event) => setBillDraft({ ...billDraft, payDay: event.target.value })} /></div>
+              <div className="space-y-2"><Label>Categoría</Label><Select value={billDraft.categoryId} onValueChange={(categoryId) => setBillDraft({ ...billDraft, categoryId })}><SelectTrigger aria-label="Categoría del pago recurrente"><SelectValue placeholder="Seleccionar" /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}</SelectContent></Select></div>
+              <Button onClick={createBill}><Plus /> Agregar</Button>
+            </CardContent></Card>
 
-          {/* Formulario agregar */}
-          <div style={{ padding: '16px 24px', borderBottom: '1px solid #f8fafc', background: '#f8fafc' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'auto 80px 120px auto auto', gap: '10px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>Nombre</p>
-                <input placeholder="Netflix" value={newBill.title} onChange={e => setNewBill({ ...newBill, title: e.target.value })} style={inputStyle} />
-              </div>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>Día</p>
-                <input type="number" placeholder="5" value={newBill.pay_day} onChange={e => setNewBill({ ...newBill, pay_day: e.target.value })} style={inputStyle} />
-              </div>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>Monto</p>
-                <input type="number" placeholder="$" value={newBill.amount} onChange={e => setNewBill({ ...newBill, amount: e.target.value })} style={inputStyle} />
-              </div>
-              <div>
-                <p style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', marginBottom: '5px', textTransform: 'uppercase' }}>Categoría</p>
-                <select value={newBill.category_id} onChange={e => setNewBill({ ...newBill, category_id: e.target.value })} style={inputStyle}>
-                  <option value="">Seleccionar...</option>
-                  {categories.map((c: any) => <option key={c.id} value={c.id}>{c.icon} {c.name}</option>)}
-                </select>
-              </div>
-              <button onClick={createBill} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: '#0f172a', color: 'white', border: 'none', borderRadius: '9px',
-                padding: '9px 16px', cursor: 'pointer', fontWeight: 700, fontSize: '13px', gap: '6px'
-              }}>
-                <Plus size={14} /> Agregar
-              </button>
-            </div>
-          </div>
-
-          {/* Lista */}
-          <div style={{ padding: '8px 24px 20px' }}>
-            {bills.length === 0 ? (
-              <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '14px', padding: '24px 0' }}>
-                No hay pagos recurrentes registrados.
-              </p>
-            ) : bills.map((b: any, i: number) => (
-              <div key={b.id} style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px',
-                padding: '14px 0', borderBottom: i < bills.length - 1 ? '1px solid #f1f5f9' : 'none'
-              }}>
-                {/* Día */}
-                <div style={{
-                  minWidth: '48px', height: '48px', borderRadius: '12px',
-                  background: '#eff6ff', border: '1px solid #bfdbfe',
-                  display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center'
-                }}>
-                  <span style={{ fontSize: '9px', fontWeight: 700, color: '#2563eb', textTransform: 'uppercase' }}>día</span>
-                  <span style={{ fontSize: '18px', fontWeight: 900, color: '#1d4ed8', lineHeight: 1 }}>{b.pay_day}</span>
-                </div>
-                {/* Info */}
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontWeight: 700, color: '#1e293b', fontSize: '14px', margin: 0 }}>{b.title}</p>
-                  <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>
-                    {b.category?.icon} {b.category?.name} · {formatCurrency(parseFloat(b.amount))}
-                  </p>
-                </div>
-                {/* Acciones */}
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => payBill(b)} style={{
-                    display: 'flex', alignItems: 'center', gap: '5px',
-                    background: '#059669', color: 'white', border: 'none',
-                    borderRadius: '8px', padding: '8px 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer'
-                  }}>
-                    <CreditCard size={13} /> Pagar
-                  </button>
-                  <button onClick={() => deleteBill(b.id)} style={{
-                    background: 'none', border: '1px solid #e2e8f0', borderRadius: '8px',
-                    padding: '8px', cursor: 'pointer', color: '#cbd5e1'
-                  }}>
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </>)}
-
-      {/* ── MODAL NUEVA DEUDA ── */}
-      {debtModal && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '20px'
-        }}>
-          <div style={{ background: 'white', borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '420px', boxShadow: '0 25px 60px rgba(0,0,0,0.2)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-              <div style={{ width: '40px', height: '40px', background: '#fef2f2', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <AlertCircle size={20} style={{ color: '#dc2626' }} />
-              </div>
-              <div>
-                <p style={{ fontWeight: 800, fontSize: '16px', color: '#0f172a', margin: 0 }}>Agregar nueva deuda</p>
-                <p style={{ fontSize: '12px', color: '#94a3b8', marginTop: '2px' }}>Se registrará como pasivo</p>
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
-              <div>
-                <p style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', marginBottom: '6px', textTransform: 'uppercase' }}>Nombre de la deuda</p>
-                <input placeholder="Ej: Tarjeta Visa" value={newDebt.name} onChange={e => setNewDebt({ ...newDebt, name: e.target.value })} style={inputStyle} />
-              </div>
-              <div>
-                <p style={{ fontSize: '12px', fontWeight: 700, color: '#64748b', marginBottom: '6px', textTransform: 'uppercase' }}>Saldo actual que debes</p>
-                <input type="number" placeholder="0" value={newDebt.amount} onChange={e => setNewDebt({ ...newDebt, amount: e.target.value })} style={inputStyle} />
-                <p style={{ fontSize: '11px', color: '#94a3b8', marginTop: '5px' }}>Ingresa 0 si no quieres registrar saldo inicial</p>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button onClick={() => setDebtModal(false)} style={{
-                flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0',
-                background: 'white', color: '#64748b', fontWeight: 600, fontSize: '14px', cursor: 'pointer'
-              }}>Cancelar</button>
-              <button onClick={createDebt} disabled={!newDebt.name} style={{
-                flex: 1, padding: '12px', borderRadius: '10px', border: 'none',
-                background: newDebt.name ? '#dc2626' : '#fca5a5', color: 'white',
-                fontWeight: 700, fontSize: '14px', cursor: newDebt.name ? 'pointer' : 'not-allowed'
-              }}>Crear deuda</button>
-            </div>
-          </div>
-        </div>
+            {bills.length === 0 ? <EmptyState icon={CalendarClock} title="Sin pagos recurrentes" description="Agrega servicios, arriendo u otras obligaciones periódicas." /> : (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{bills.map((bill) => {
+                const paid = bill.payments?.some((payment) => !payment.voided_at && payment.period.slice(0, 10) === currentPeriod) ?? false
+                return <Card key={bill.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><div className="mb-2 flex items-center gap-2"><CardTitle>{bill.title}</CardTitle>{paid && <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 /> Pagado</Badge>}</div><CardDescription>Vence el día {bill.pay_day} · {bill.category?.name}</CardDescription></div><ArchiveAction name={bill.title} onConfirm={() => archive('bill', bill.id)} /></div></CardHeader><CardContent><p className="metric-value text-xl font-bold">{formatCurrency(Number(bill.amount))}</p><Button asChild className="mt-4 w-full" disabled={paid}><Link aria-disabled={paid} href={paid ? '#' : `/dashboard/transaccion?${new URLSearchParams({ desc: bill.title, amount: String(bill.amount), cat: bill.category_id, scope: bill.scope, type: 'GASTO', bill: bill.id })}`}>{paid ? 'Pagado este mes' : 'Registrar pago'}</Link></Button></CardContent></Card>
+              })}</div>
+            )}
+          </section>
+        </>
       )}
     </div>
   )
+}
+
+function ArchiveAction({ name, onConfirm }: { name: string; onConfirm: () => void }) {
+  return <AlertDialog><AlertDialogTrigger asChild><Button variant="ghost" size="icon-sm" aria-label={`Archivar ${name}`}><Archive /></Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>¿Archivar “{name}”?</AlertDialogTitle><AlertDialogDescription>Se ocultará de la operación diaria, pero sus movimientos seguirán disponibles.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={onConfirm}>Archivar</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
 }

@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Presupuesto Familiar
 
-## Getting Started
+Aplicación familiar de contabilidad por partida doble construida con Next.js y Supabase. Esta versión prioriza la conservación del historial, la trazabilidad de correcciones y una lectura financiera más clara.
 
-First, run the development server:
+## Mejoras principales
 
-```bash
+- Los asientos se registran de forma atómica mediante funciones de PostgreSQL: o se guarda todo el movimiento o no se guarda nada.
+- Las correcciones ya no eliminan historia: anulan el asiento original con una reversión y crean uno corregido.
+- Las cuentas y obligaciones se archivan; no se borran registros contables.
+- Los saldos se consultan en una vista única y se eliminan consultas repetitivas.
+- Los reportes separan gasto real, abono a capital de deuda, ingreso y ahorro.
+- La información familiar queda aislada por hogar mediante Row Level Security (RLS).
+- La interfaz es adaptable a móvil, accesible y consistente.
+- Hay pruebas automáticas para partida doble, fechas y reportes.
+
+## Requisitos
+
+- Node.js 20.9 o superior.
+- npm 10 o superior.
+- Un proyecto de Supabase de respaldo o desarrollo.
+- Para probar migraciones localmente: Supabase CLI y Docker Desktop.
+
+## Instalación segura
+
+```powershell
+npm install
+Copy-Item .env.example .env.local
+npm run check
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Complete `.env.local` únicamente con la URL y la clave pública (`anon` o publishable) del proyecto de respaldo. Nunca coloque una clave `service_role` en una variable `NEXT_PUBLIC_*`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=https://TU-PROYECTO.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=TU_CLAVE_PUBLICA
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Abra `http://localhost:3000`.
 
-## Learn More
+## Base de datos
 
-To learn more about Next.js, take a look at the following resources:
+La migración está en `supabase/migrations/202607160001_safe_finance_refactor.sql`. Es aditiva: conserva los movimientos existentes, añade hogares, auditoría, pagos de obligaciones y operaciones contables atómicas.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+No la ejecute directamente sobre producción. Siga primero la guía [Respaldo y migración segura](docs/SUPABASE_BACKUP_AND_MIGRATION.md), aplíquela sobre una copia y ejecute `supabase/verification/after_migration_checks.sql`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Comandos
 
-## Deploy on Vercel
+```powershell
+npm run lint       # calidad y reglas de React/Next.js
+npm run typecheck  # comprobación TypeScript
+npm run test       # pruebas unitarias
+npm run build      # compilación de producción
+npm run check      # todas las verificaciones anteriores
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Estructura relevante
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `app/`: páginas y rutas Next.js.
+- `components/`: interfaz reutilizable.
+- `lib/finance.ts`: acceso seguro a operaciones financieras.
+- `lib/ledger.ts`: reglas puras de partida doble.
+- `lib/reporting.ts`: cálculo de indicadores mensuales.
+- `supabase/migrations/`: cambios versionados de esquema y RLS.
+- `supabase/verification/`: consultas de integridad posteriores a la migración.
+- `tests/`: pruebas automatizadas.
+
+## Reglas contables adoptadas
+
+- Cada transacción debe tener débitos iguales a créditos.
+- Pagar capital de una deuda reduce un pasivo; no se presenta como gasto nuevamente.
+- Los intereses sí son gasto.
+- Las transferencias entre cuentas propias no son ingreso ni gasto.
+- Una corrección genera trazabilidad; nunca borra el comprobante original.
+
+## Flujo recomendado de Git
+
+Trabaje siempre en una rama y mantenga `main` como versión estable:
+
+```powershell
+git switch -c mejora/nombre-corto
+npm run check
+git add .
+git commit -m "Descripción de la mejora"
+git push -u origin mejora/nombre-corto
+```
+
+Revise el cambio mediante Pull Request antes de integrarlo.

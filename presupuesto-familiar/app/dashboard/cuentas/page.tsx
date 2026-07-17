@@ -1,180 +1,179 @@
 'use client'
+
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase'
-import { Plus, Trash2, Wallet, ShoppingBag, Banknote, Loader2 } from 'lucide-react'
+import { Archive, Banknote, Landmark, Plus, ReceiptText } from 'lucide-react'
+import { toast } from 'sonner'
+import { PageHeader } from '@/components/finance/page-header'
+import { ScopeToggle } from '@/components/finance/scope-toggle'
+import { LoadingState } from '@/components/finance/states'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { getFinanceContext, getFinanceErrorMessage } from '@/lib/finance'
+import { getBrowserClient } from '@/lib/supabase/client'
+import type { Account, AccountType, FinanceContext, ScopeType } from '@/lib/types'
 
-export default function GestionCuentasPage() {
-  const supabase = createClient()
-  const [loading, setLoading] = useState(true)
-  const [scope, setScope]     = useState('PERSONAL')
-  const [assets, setAssets]   = useState<any[]>([])
-  const [expenses, setExpenses] = useState<any[]>([])
-  const [incomes, setIncomes]   = useState<any[]>([])
-  const [newAsset,   setNewAsset]   = useState({ name: '', icon: '' })
-  const [newExpense, setNewExpense] = useState({ name: '', icon: '' })
-  const [newIncome,  setNewIncome]  = useState({ name: '', icon: '' })
+interface DraftAccount { name: string; icon: string }
 
-  const fetchData = async () => {
-    setLoading(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    let query = supabase.from('accounts').select('*').eq('scope', scope)
-    if (scope === 'PERSONAL') query = query.eq('user_id', user.id)
-    const { data } = await query
-    if (data) {
-      setAssets(data.filter((a: any) => a.type === 'ASSET'))
-      setExpenses(data.filter((a: any) => a.type === 'EXPENSE'))
-      setIncomes(data.filter((a: any) => a.type === 'INCOME'))
-    }
-    setLoading(false)
-  }
-
-  useEffect(() => { fetchData() }, [scope])
-
-  const createAccount = async (name: string, icon: string, type: string) => {
-    if (!name) return
-    const finalIcon = icon || name.charAt(0).toUpperCase()
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('accounts').insert({ name, icon: finalIcon, type, scope, user_id: user?.id })
-    setNewAsset({ name: '', icon: '' }); setNewExpense({ name: '', icon: '' }); setNewIncome({ name: '', icon: '' })
-    fetchData()
-  }
-
-  const deleteAccount = async (id: string) => {
-    const { error } = await supabase.from('accounts').delete().eq('id', id)
-    if (error) alert('No se pudo borrar. Puede tener datos asociados.')
-    else fetchData()
-  }
-
-  const inputStyle: React.CSSProperties = {
-    padding: '9px 12px', borderRadius: '9px', border: '1px solid #e2e8f0',
-    fontSize: '13px', outline: 'none', background: 'white', color: '#1e293b', boxSizing: 'border-box'
-  }
-
-  const sections = [
-    { title: 'Cuentas / Bancos', icon: <Wallet size={16} style={{ color: '#2563eb' }} />, items: assets, newItem: newAsset, setNewItem: setNewAsset, type: 'ASSET', accent: '#2563eb', accentBg: '#eff6ff', accentBorder: '#bfdbfe' },
-    { title: 'Categorías de Gasto', icon: <ShoppingBag size={16} style={{ color: '#dc2626' }} />, items: expenses, newItem: newExpense, setNewItem: setNewExpense, type: 'EXPENSE', accent: '#dc2626', accentBg: '#fef2f2', accentBorder: '#fecaca' },
-    { title: 'Fuentes de Ingreso', icon: <Banknote size={16} style={{ color: '#059669' }} />, items: incomes, newItem: newIncome, setNewItem: setNewIncome, type: 'INCOME', accent: '#059669', accentBg: '#ecfdf5', accentBorder: '#a7f3d0' },
-  ]
-
+function AccountSection({ title, description, icon: Icon, accounts, draft, onDraftChange, onCreate, onArchive }: {
+  title: string
+  description: string
+  icon: typeof Landmark
+  accounts: Account[]
+  draft: DraftAccount
+  onDraftChange: (draft: DraftAccount) => void
+  onCreate: () => void
+  onArchive: (account: Account) => void
+}) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '40px' }}>
-
-      {/* Encabezado */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h2 style={{ fontSize: '26px', fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.5px' }}>
-            Configuración
-          </h2>
-          <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '3px' }}>
-            Gestiona tus cuentas y categorías
-          </p>
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-3">
+          <span className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><Icon aria-hidden="true" /></span>
+          <div><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></div>
         </div>
-        <div style={{ display: 'inline-flex', gap: '4px', background: '#f1f5f9', borderRadius: '12px', padding: '4px' }}>
-          {[{ v: 'PERSONAL', label: '👤 Personal' }, { v: 'SHARED', label: '🏠 Familiar' }].map(({ v, label }) => (
-            <button key={v} onClick={() => setScope(v)} style={{
-              padding: '7px 18px', borderRadius: '9px', border: 'none', cursor: 'pointer',
-              fontSize: '13px', fontWeight: 600, transition: 'all 0.15s',
-              background: scope === v ? 'white' : 'transparent',
-              color: scope === v ? '#2563eb' : '#64748b',
-              boxShadow: scope === v ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
-            }}>{label}</button>
-          ))}
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <div className="grid gap-3 sm:grid-cols-[1fr_100px_auto] sm:items-end">
+          <div className="space-y-2">
+            <Label htmlFor={`${title}-name`}>Nombre</Label>
+            <Input id={`${title}-name`} value={draft.name} placeholder="Ej. Cuenta principal"
+              onChange={(event) => onDraftChange({ ...draft, name: event.target.value })} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor={`${title}-icon`}>Sigla</Label>
+            <Input id={`${title}-icon`} value={draft.icon} maxLength={4} placeholder="CTA"
+              onChange={(event) => onDraftChange({ ...draft, icon: event.target.value.toUpperCase() })} />
+          </div>
+          <Button onClick={onCreate} disabled={!draft.name.trim()}><Plus /> Agregar</Button>
         </div>
-      </div>
 
-      {loading ? (
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '80px', color: '#94a3b8' }}>
-          <Loader2 size={32} style={{ animation: 'spin 1s linear infinite', color: '#2563eb' }} />
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
-          {sections.map((sec) => (
-            <div key={sec.type} style={{
-              background: 'white', borderRadius: '20px', border: '1px solid #e2e8f0',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden'
-            }}>
-              {/* Header sección */}
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '16px 20px', borderBottom: '1px solid #f1f5f9',
-                background: sec.accentBg
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {sec.icon}
-                  <p style={{ fontWeight: 700, fontSize: '14px', color: '#1e293b', margin: 0 }}>{sec.title}</p>
-                </div>
-                <span style={{
-                  fontSize: '11px', fontWeight: 700, padding: '3px 9px', borderRadius: '99px',
-                  background: 'white', color: sec.accent, border: `1px solid ${sec.accentBorder}`
-                }}>
-                  {sec.items.length} ítem{sec.items.length !== 1 ? 's' : ''}
-                </span>
-              </div>
-
-              {/* Lista */}
-              <div style={{ padding: '12px 16px', maxHeight: '240px', overflowY: 'auto' }}>
-                {sec.items.length === 0 ? (
-                  <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: '13px', padding: '16px 0' }}>
-                    Sin ítems aún.
-                  </p>
-                ) : sec.items.map((item: any) => (
-                  <div key={item.id} style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    padding: '9px 10px', borderRadius: '10px',
-                    marginBottom: '4px', transition: 'background 0.1s'
-                  }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#f8fafc')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                  >
-                    <div style={{
-                      width: '34px', height: '28px', borderRadius: '7px',
-                      background: '#f1f5f9', border: '1px solid #e2e8f0',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '11px', fontWeight: 800, color: '#475569', flexShrink: 0
-                    }}>
-                      {item.icon}
-                    </div>
-                    <span style={{ flex: 1, fontSize: '13px', fontWeight: 600, color: '#334155' }}>{item.name}</span>
-                    <button onClick={() => deleteAccount(item.id)} style={{
-                      background: 'none', border: 'none', cursor: 'pointer', color: '#cbd5e1', padding: '3px'
-                    }}
-                      onMouseEnter={e => (e.currentTarget.style.color = '#dc2626')}
-                      onMouseLeave={e => (e.currentTarget.style.color = '#cbd5e1')}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              {/* Formulario agregar */}
-              <div style={{ padding: '12px 16px', borderTop: '1px solid #f1f5f9', display: 'flex', gap: '8px' }}>
-                <input
-                  placeholder="SIGLA" maxLength={4}
-                  value={sec.newItem.icon}
-                  onChange={e => sec.setNewItem({ ...sec.newItem, icon: e.target.value.toUpperCase() })}
-                  style={{ ...inputStyle, width: '64px', textAlign: 'center', fontWeight: 800, textTransform: 'uppercase' }}
-                />
-                <input
-                  placeholder="Nombre completo"
-                  value={sec.newItem.name}
-                  onChange={e => sec.setNewItem({ ...sec.newItem, name: e.target.value })}
-                  style={{ ...inputStyle, flex: 1 }}
-                  onKeyDown={e => e.key === 'Enter' && createAccount(sec.newItem.name, sec.newItem.icon, sec.type)}
-                />
-                <button
-                  onClick={() => createAccount(sec.newItem.name, sec.newItem.icon, sec.type)}
-                  style={{
-                    width: '36px', height: '36px', borderRadius: '9px', border: 'none',
-                    background: sec.accent, color: 'white', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
-                  }}>
-                  <Plus size={16} />
-                </button>
-              </div>
+        <div className="divide-y rounded-xl border">
+          {accounts.length === 0 ? (
+            <p className="p-5 text-center text-sm text-muted-foreground">No hay elementos activos.</p>
+          ) : accounts.map((account) => (
+            <div key={account.id} className="flex items-center gap-3 p-3">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-muted font-mono text-[11px] font-bold text-muted-foreground">
+                {account.icon || account.name.slice(0, 3).toUpperCase()}
+              </span>
+              <p className="min-w-0 flex-1 truncate text-sm font-medium">{account.name}</p>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" aria-label={`Archivar ${account.name}`}><Archive /></Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>¿Archivar “{account.name}”?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      El historial se conservará. Las cuentas de efectivo o deuda deben quedar en cero antes de archivarse.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={() => onArchive(account)}>Archivar</AlertDialogAction></AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+const emptyDraft = (): DraftAccount => ({ name: '', icon: '' })
+
+export default function AccountsPage() {
+  const [scope, setScope] = useState<ScopeType>('PERSONAL')
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [context, setContext] = useState<FinanceContext | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [assetDraft, setAssetDraft] = useState(emptyDraft)
+  const [expenseDraft, setExpenseDraft] = useState(emptyDraft)
+  const [incomeDraft, setIncomeDraft] = useState(emptyDraft)
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadAccounts() {
+      try {
+        const client = getBrowserClient()
+        const nextContext = await getFinanceContext(client)
+        if (scope === 'SHARED' && !nextContext.householdId) {
+          if (!cancelled) {
+            setContext(nextContext)
+            setAccounts([])
+            setLoading(false)
+          }
+          return
+        }
+        let query = client.from('accounts').select('*').eq('scope', scope).is('archived_at', null).order('name')
+        query = scope === 'PERSONAL'
+          ? query.eq('user_id', nextContext.userId)
+          : query.eq('household_id', nextContext.householdId)
+        const { data, error } = await query.returns<Account[]>()
+        if (error) throw error
+        if (!cancelled) {
+          setContext(nextContext)
+          setAccounts(data ?? [])
+          setLoading(false)
+        }
+      } catch (error) {
+        if (!cancelled) { toast.error(getFinanceErrorMessage(error)); setLoading(false) }
+      }
+    }
+    void loadAccounts()
+    return () => { cancelled = true }
+  }, [scope, refreshKey])
+
+  const createAccount = async (draft: DraftAccount, type: AccountType, clear: () => void) => {
+    if (!context || !draft.name.trim()) return
+    try {
+      const { error } = await getBrowserClient().from('accounts').insert({
+        name: draft.name.trim(),
+        icon: draft.icon.trim() || draft.name.trim().slice(0, 3).toUpperCase(),
+        type,
+        scope,
+        user_id: context.userId,
+        household_id: scope === 'SHARED' ? context.householdId : null,
+      })
+      if (error) throw error
+      clear()
+      setRefreshKey((key) => key + 1)
+      toast.success('Cuenta creada correctamente.')
+    } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+  }
+
+  const archiveAccount = async (account: Account) => {
+    try {
+      const { error } = await getBrowserClient().rpc('archive_account', { p_account_id: account.id })
+      if (error) throw error
+      setRefreshKey((key) => key + 1)
+      toast.success('Cuenta archivada; el historial se conservó.')
+    } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+  }
+
+  const changeScope = (next: ScopeType) => { setLoading(true); setScope(next) }
+  const filtered = (type: AccountType) => accounts.filter((account) => account.type === type)
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Cuentas y categorías" description="Organiza dónde guardas dinero y cómo clasificas ingresos y gastos." actions={<ScopeToggle value={scope} onChange={changeScope} />} />
+      {loading ? <LoadingState /> : (
+        <div className="grid gap-5 xl:grid-cols-2">
+          <AccountSection title="Cuentas y efectivo" description="Bancos, billeteras y efectivo disponible." icon={Landmark}
+            accounts={filtered('ASSET')} draft={assetDraft} onDraftChange={setAssetDraft}
+            onCreate={() => createAccount(assetDraft, 'ASSET', () => setAssetDraft(emptyDraft()))} onArchive={archiveAccount} />
+          <AccountSection title="Categorías de gasto" description="Clasificaciones para analizar el consumo." icon={ReceiptText}
+            accounts={filtered('EXPENSE')} draft={expenseDraft} onDraftChange={setExpenseDraft}
+            onCreate={() => createAccount(expenseDraft, 'EXPENSE', () => setExpenseDraft(emptyDraft()))} onArchive={archiveAccount} />
+          <AccountSection title="Fuentes de ingreso" description="Salarios, ventas y otras entradas." icon={Banknote}
+            accounts={filtered('INCOME')} draft={incomeDraft} onDraftChange={setIncomeDraft}
+            onCreate={() => createAccount(incomeDraft, 'INCOME', () => setIncomeDraft(emptyDraft()))} onArchive={archiveAccount} />
         </div>
       )}
     </div>
