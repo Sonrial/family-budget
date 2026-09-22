@@ -35,7 +35,7 @@ Esta exportación permite conservar los datos de aplicación, pero NO es un resp
 
 Ejecutar `npm run check` para lint, tipos, pruebas y compilación. `supabase/verification/safe_labels.sql` prueba permisos, edición, concurrencia y registro decimal dentro de una transacción que termina en ROLLBACK.
 
-La apariencia de inicio se comprobó con navegador en escritorio y móvil, en claro y oscuro. La edición autenticada debe comprobarse también desde una sesión del usuario; no se solicitan contraseñas ni se crean accesos para suplantar esa sesión.
+La apariencia se comprobó con navegador en escritorio y móvil, en claro y oscuro. El usuario inició sesión personalmente y se verificaron cuentas, búsqueda, pestañas y el editor: el nombre vacío desactiva Guardar y Cancelar conserva la cuenta. No se guardó ningún cambio de nombre real durante la prueba de interfaz. La operación de guardado y sus permisos se comprobaron en SQL con ROLLBACK.
 
 ## Advertencias que permanecen
 

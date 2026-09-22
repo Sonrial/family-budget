@@ -45,7 +45,9 @@ function AccountSection({ title, description, icon: Icon, accounts, draft, onDra
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        <div className="grid gap-3 sm:grid-cols-[1fr_100px_auto] sm:items-end">
+        <details className="rounded-xl border bg-muted/20 p-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md text-sm font-semibold focus-visible:outline-2 focus-visible:outline-ring"><Plus className="size-4" aria-hidden="true" /> Agregar nuevo elemento</summary>
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_100px_auto] sm:items-end">
           <div className="space-y-2">
             <Label htmlFor={`${title}-name`}>Nombre</Label>
             <Input id={`${title}-name`} value={draft.name} maxLength={80} placeholder="Ej. Cuenta principal"
@@ -58,6 +60,7 @@ function AccountSection({ title, description, icon: Icon, accounts, draft, onDra
           </div>
           <Button onClick={onCreate} disabled={saving || !draft.name.trim()}><Plus /> Agregar</Button>
         </div>
+        </details>
 
         <div className="divide-y rounded-xl border">
           {accounts.length === 0 ? (
@@ -191,7 +194,7 @@ export default function AccountsPage() {
     finally { busy.current = false; setSaving(false) }
   }
 
-  const changeScope = (next: ScopeType) => { setLoading(true); setScope(next) }
+  const changeScope = (next: ScopeType) => { setLoading(true); setScope(next); setSearch('') }
   const filtered = (type: AccountType) => accounts.filter((account) => account.type === type && account.name.toLocaleLowerCase('es').includes(search.trim().toLocaleLowerCase('es')))
 
   return (
@@ -200,7 +203,7 @@ export default function AccountsPage() {
       <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">
         <strong>Tu historial se conserva.</strong> Cambiar nombres y siglas no altera saldos ni movimientos. El nuevo nombre aparecerá también en el historial.{scope === 'SHARED' && ' Los cambios son visibles para todo el hogar.'}
       </div>
-      <Tabs value={activeType} onValueChange={setActiveType}>
+      <Tabs value={activeType} onValueChange={(value) => { setActiveType(value); setSearch('') }}>
         <TabsList className="grid h-auto w-full grid-cols-3 p-1 md:w-fit">
           <TabsTrigger value="ASSET" className="py-3">Cuentas ({accounts.filter((a) => a.type === 'ASSET').length})</TabsTrigger>
           <TabsTrigger value="EXPENSE" className="py-3">Gastos ({accounts.filter((a) => a.type === 'EXPENSE').length})</TabsTrigger>
