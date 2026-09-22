@@ -25,7 +25,8 @@ export const getLocalMonthInputValue = (date = new Date()): string =>
 
 export const parseCurrencyInput = (value: string): number => {
   const normalized = value.replace(/\s/g, '').replace(/\./g, '').replace(',', '.')
-  const parsed = Number.parseFloat(normalized)
+  if (!/^-?\d+(?:\.\d{0,2})?$/.test(normalized)) return 0
+  const parsed = Number(normalized)
   return Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : 0
 }
 
@@ -34,6 +35,12 @@ export const formatCurrencyInput = (value: string): string => {
   if (!parsed) return ''
   return new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 }).format(parsed)
 }
+
+// Database/API decimals use a dot; never parse them as Colombian input text.
+export const currencyNumberToInput = (value: number): string =>
+  Number.isFinite(value) && value !== 0
+    ? new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 }).format(value)
+    : ''
 
 export const getMonthBounds = (monthValue: string): { start: string; end: string } => {
   const [year, month] = monthValue.split('-').map(Number)

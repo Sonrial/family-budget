@@ -24,8 +24,12 @@ export async function proxy(request: NextRequest) {
   const isDashboard = request.nextUrl.pathname.startsWith('/dashboard')
   const isAuthPage = request.nextUrl.pathname === '/' || request.nextUrl.pathname === '/login'
 
-  if (!user && isDashboard) return NextResponse.redirect(new URL('/', request.url))
-  if (user && isAuthPage) return NextResponse.redirect(new URL('/dashboard', request.url))
+  const destination = !user && isDashboard ? '/' : user && isAuthPage ? '/dashboard' : null
+  if (destination) {
+    const redirect = NextResponse.redirect(new URL(destination, request.url))
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie))
+    return redirect
+  }
   return response
 }
 

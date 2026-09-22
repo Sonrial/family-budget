@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
-  formatDate, getLocalDateInputValue, getMonthBounds, parseCurrencyInput,
+  formatDate, getLocalDateInputValue, getMonthBounds, parseCurrencyInput, currencyNumberToInput,
 } from '@/lib/formatters'
 
 describe('formatters', () => {
+  it('conserva los decimales de la base de datos al editar', () => {
+    for (const amount of [100.5, 0.01, 1234567.89, 1000, 0]) {
+      expect(parseCurrencyInput(currencyNumberToInput(amount))).toBe(amount)
+    }
+  })
+  it('rechaza importes parcialmente válidos', () => {
+    expect(parseCurrencyInput('12abc')).toBe(0)
+    expect(parseCurrencyInput('1,2,3')).toBe(0)
+    expect(parseCurrencyInput('Infinity')).toBe(0)
+  })
   it('mantiene la fecha calendario local sin convertirla primero a UTC', () => {
     const localEvening = new Date(2026, 6, 16, 23, 30)
     expect(getLocalDateInputValue(localEvening)).toBe('2026-07-16')

@@ -16,10 +16,10 @@ import { getBrowserClient } from '@/lib/supabase/client'
 import type { AccountBalance, ScopeType, Transaction } from '@/lib/types'
 
 const typeMeta = {
-  GASTO: { label: 'Gasto', icon: ArrowDownRight, className: 'text-red-600 bg-red-50' },
-  INGRESO: { label: 'Ingreso', icon: ArrowUpRight, className: 'text-emerald-700 bg-emerald-50' },
-  APORTE: { label: 'Transferencia', icon: ArrowRightLeft, className: 'text-blue-700 bg-blue-50' },
-  AJUSTE: { label: 'Ajuste', icon: ArrowRightLeft, className: 'text-amber-700 bg-amber-50' },
+  GASTO: { label: 'Gasto', icon: ArrowDownRight, className: 'text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950/50' },
+  INGRESO: { label: 'Ingreso', icon: ArrowUpRight, className: 'text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50' },
+  APORTE: { label: 'Transferencia', icon: ArrowRightLeft, className: 'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/50' },
+  AJUSTE: { label: 'Ajuste', icon: ArrowRightLeft, className: 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/50' },
 } as const
 
 export default function DashboardPage() {
@@ -39,7 +39,7 @@ export default function DashboardPage() {
         let transactionQuery = client.from('transactions')
           .select('*, created_by_profile:profiles(email)')
           .eq('scope', scope).eq('is_reversal', false)
-          .order('date', { ascending: false }).limit(8)
+          .order('date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false }).limit(8)
 
         if (scope === 'PERSONAL') {
           accountQuery = accountQuery.eq('user_id', context.userId)
@@ -98,7 +98,7 @@ export default function DashboardPage() {
               <div className="relative">
                 <div className="mb-5 flex items-center gap-2 text-sm text-blue-100">
                   <TrendingUp className="size-4" aria-hidden="true" />
-                  {scope === 'PERSONAL' ? 'Patrimonio personal disponible' : 'Fondo familiar disponible'}
+                  {scope === 'PERSONAL' ? 'Dinero personal disponible' : 'Fondo familiar disponible'}
                 </div>
                 <p className="metric-value text-3xl font-bold sm:text-4xl">{formatCurrency(total)}</p>
                 <p className="mt-2 text-sm text-blue-100/80">Suma de {accounts.length} cuenta{accounts.length === 1 ? '' : 's'} activa{accounts.length === 1 ? '' : 's'}</p>

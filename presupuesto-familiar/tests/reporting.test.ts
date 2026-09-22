@@ -7,6 +7,17 @@ const base = {
 }
 
 describe('monthly reporting', () => {
+  it('suma todas las líneas y distingue categorías con el mismo nombre por su ID', () => {
+    const report = buildMonthlyReport([{ ...base, type: 'GASTO', amount: [
+      { amount: 20, account: { id: 'a', name: 'Otros', type: 'EXPENSE' } },
+      { amount: 30, account: { id: 'b', name: 'Otros', type: 'EXPENSE' } },
+      { amount: 40, account: { id: 'c', name: 'Crédito', type: 'LIABILITY' } },
+    ] }])
+    expect(report.kpis.expense).toBe(50)
+    expect(report.kpis.debtPayments).toBe(40)
+    expect(report.categories).toHaveLength(2)
+    expect(report.categories.map((category) => category.id).sort()).toEqual(['a', 'b'])
+  })
   it('separa consumo, ingresos y capital de deuda', () => {
     const transactions: ReportTransaction[] = [
       { ...base, id: 'income', type: 'INGRESO', amount: [

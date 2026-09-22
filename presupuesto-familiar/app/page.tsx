@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { useRouter } from 'next/navigation'
 import { AlertCircle, CheckCircle2, Loader2, PiggyBank } from 'lucide-react'
 import { getBrowserClient } from '@/lib/supabase/client'
@@ -51,6 +52,7 @@ export default function LoginPage() {
 
   return (
     <main className="surface-grid relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12">
+      <div className="absolute right-4 top-4 z-10"><ThemeToggle /></div>
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,oklch(0.78_0.12_255/0.28),transparent_38%),radial-gradient(circle_at_bottom_left,oklch(0.72_0.13_195/0.2),transparent_34%)]" />
       <div className="relative w-full max-w-md">
         <div className="mb-7 flex flex-col items-center text-center">
@@ -90,7 +92,7 @@ export default function LoginPage() {
                 </Alert>
               )}
               {success && (
-                <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900">
+                <Alert className="border-emerald-200 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-900">
                   <CheckCircle2 aria-hidden="true" />
                   <AlertTitle>Cuenta creada</AlertTitle>
                   <AlertDescription>{success}</AlertDescription>

@@ -2,7 +2,7 @@ import type { AccountType, ReportKPIs, Transaction } from '@/lib/types'
 
 export interface ReportLine {
   amount: number
-  account: { name: string; type: AccountType } | null
+  account: { id?: string; name: string; type: AccountType } | null
 }
 
 export interface ReportTransaction extends Transaction {
@@ -10,6 +10,7 @@ export interface ReportTransaction extends Transaction {
 }
 
 export interface PieDatum {
+  id: string
   name: string
   value: number
   percent: number
@@ -40,41 +41,32 @@ export function buildMonthlyReport(transactions: ReportTransaction[]): MonthlyRe
   let income = 0
   let expense = 0
   let debtPayments = 0
-  const byCategory: Record<string, number> = {}
+  const byCategory: Map<string, { name: string; value: number }> = new Map()
   const expenses: ExpenseDatum[] = []
 
   for (const transaction of transactions) {
     if (transaction.voided_at || transaction.is_reversal || transaction.legacy_incomplete) continue
 
-    if (transaction.type === 'INGRESO') {
-      const assetLine = transaction.amount.find(
-        (line) => Number(line.amount) > 0 && line.account?.type === 'ASSET',
-      )
-      income += Number(assetLine?.amount ?? 0)
-    }
-
-    if (transaction.type === 'GASTO') {
-      const positiveLine = transaction.amount.find((line) => Number(line.amount) > 0)
-      const value = Number(positiveLine?.amount ?? 0)
-      if (positiveLine?.account?.type === 'LIABILITY') {
-        debtPayments += value
-      } else if (positiveLine?.account?.type === 'EXPENSE') {
-        const category = positiveLine.account.name || 'Otros'
+    for (const line of transaction.amount) {
+      const value = Number(line.amount)
+      if (!Number.isFinite(value) || value <= 0) continue
+      if (transaction.type === 'INGRESO' && line.account?.type === 'ASSET') income += value
+      if (transaction.type !== 'GASTO') continue
+      if (line.account?.type === 'LIABILITY') debtPayments += value
+      if (line.account?.type === 'EXPENSE') {
+        const category = line.account.name || 'Otros'
+        const id = line.account.id ?? category
         expense += value
-        byCategory[category] = (byCategory[category] ?? 0) + value
-        expenses.push({
-          description: transaction.description,
-          amount: value,
-          date: transaction.date,
-          category,
-        })
+        const previous = byCategory.get(id)?.value ?? 0
+        byCategory.set(id, { name: category, value: previous + value })
+        expenses.push({ description: transaction.description, amount: value, date: transaction.date, category })
       }
     }
   }
 
-  const categories = Object.entries(byCategory)
-    .map(([name, value]) => ({ name, value, percent: expense ? value / expense * 100 : 0 }))
-    .sort((left, right) => right.value - left.value)
+  const categories = Array.from(byCategory, ([id, { name, value }]) => ({
+    id, name, value, percent: expense ? value / expense * 100 : 0,
+  })).sort((left, right) => right.value - left.value)
   const savings = income - expense
 
   return {

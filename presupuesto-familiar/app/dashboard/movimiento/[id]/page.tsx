@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { getFinanceErrorMessage } from '@/lib/finance'
-import { formatCurrency, formatCurrencyInput, parseCurrencyInput } from '@/lib/formatters'
+import { formatCurrency, formatCurrencyInput, currencyNumberToInput, parseCurrencyInput } from '@/lib/formatters'
 import { getBrowserClient } from '@/lib/supabase/client'
 import type { Transaction, TransactionLine } from '@/lib/types'
 
@@ -49,8 +49,9 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
           setTransaction(data)
           setNotes(data.notes ?? '')
           setDate(data.date.slice(0, 10))
-          setAmount(formatCurrencyInput(String(Math.abs(Number(representativeLine?.amount ?? 0)))))
+          setAmount(currencyNumberToInput(Math.abs(Number(representativeLine?.amount ?? 0))))
           setLoading(false)
+          setSaving(false)
         }
       } catch (error) {
         if (!cancelled) {
@@ -64,6 +65,7 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
   }, [id, router])
 
   const correctTransaction = async () => {
+    if (saving) return
     if (transaction?.legacy_incomplete) {
       toast.error('Este movimiento histórico necesita una regularización contable guiada.')
       return
@@ -89,10 +91,12 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
   }
 
   const voidTransaction = async () => {
+    if (saving) return
     if (transaction?.legacy_incomplete) {
       toast.error('Este movimiento histórico necesita una regularización contable guiada.')
       return
     }
+    setSaving(true)
     try {
       const { error } = await getBrowserClient().rpc('void_transaction', {
         p_transaction_id: id,
@@ -102,12 +106,10 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
       toast.success('Movimiento anulado mediante asiento reverso.')
       router.replace('/dashboard/movimientos')
       router.refresh()
-    } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+    } catch (error) { toast.error(getFinanceErrorMessage(error)); setSaving(false) }
   }
 
   if (loading || !transaction) return <LoadingState label="Cargando movimiento…" />
-  const positiveLine = transaction.transaction_lines.find((line) => Number(line.amount) > 0)
-  const negativeLine = transaction.transaction_lines.find((line) => Number(line.amount) < 0)
   const isVoided = Boolean(transaction.voided_at)
   const isLegacyIncomplete = Boolean(transaction.legacy_incomplete)
 
@@ -128,9 +130,9 @@ export default function MovementDetailPage({ params }: { params: Promise<{ id: s
       <Card>
         <CardHeader><CardTitle>Asiento contable</CardTitle><CardDescription>Origen y destino registrados.</CardDescription></CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
-          {[{ label: 'Origen / crédito', line: negativeLine }, { label: 'Destino / débito', line: positiveLine }].map(({ label, line }) => (
-            <div key={label} className="rounded-xl border bg-muted/25 p-4">
-              <p className="text-xs font-medium text-muted-foreground">{label}</p>
+          {transaction.transaction_lines.map((line) => (
+            <div key={line.id} className="rounded-xl border bg-muted/25 p-4">
+              <p className="text-xs font-medium text-muted-foreground">{Number(line.amount) < 0 ? 'Origen / crédito' : 'Destino / débito'}</p>
               <p className="mt-1 font-semibold">{line?.account?.name ?? 'Cuenta no disponible'}</p>
               <p className="metric-value mt-2 text-sm">{formatCurrency(Math.abs(Number(line?.amount ?? 0)))}</p>
             </div>

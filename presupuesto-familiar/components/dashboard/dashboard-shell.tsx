@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { useState } from 'react'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   BarChart3, ChevronRight, CreditCard, History, LayoutDashboard,
@@ -10,7 +12,7 @@ import { getBrowserClient } from '@/lib/supabase/client'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
 
 const links = [
@@ -22,13 +24,13 @@ const links = [
   { href: '/dashboard/reportes', label: 'Reportes', icon: BarChart3 },
 ] as const
 
-function Navigation({ pathname }: { pathname: string }) {
+function Navigation({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
   return (
     <nav aria-label="Navegación principal" className="space-y-1">
       {links.map(({ href, label, icon: Icon }) => {
-        const active = pathname === href
+        const active = pathname === href || (href === '/dashboard/movimientos' && pathname.startsWith('/dashboard/movimiento/'))
         return (
-          <Link key={href} href={href} className={cn(
+          <Link key={href} href={href} onClick={onNavigate} className={cn(
             'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
             active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
           )} aria-current={active ? 'page' : undefined}>
@@ -59,6 +61,7 @@ function Brand() {
 export function DashboardShell({ children, userEmail }: { children: React.ReactNode; userEmail: string }) {
   const pathname = usePathname()
   const router = useRouter()
+  const [menuOpen, setMenuOpen] = useState(false)
   const activePage = links.find((link) => link.href === pathname)?.label ?? 'Finanzas'
 
   const signOut = async () => {
@@ -72,6 +75,7 @@ export function DashboardShell({ children, userEmail }: { children: React.ReactN
 
   return (
     <div className="min-h-screen bg-background lg:grid lg:grid-cols-[250px_1fr]">
+      <a href="#contenido" className="sr-only fixed left-4 top-4 z-50 rounded-lg bg-primary p-3 text-primary-foreground focus:not-sr-only">Saltar al contenido</a>
       <aside className="sticky top-0 hidden h-screen border-r bg-card lg:flex lg:flex-col">
         <div className="p-5"><Brand /></div>
         <Separator />
@@ -93,16 +97,20 @@ export function DashboardShell({ children, userEmail }: { children: React.ReactN
       <div className="min-w-0">
         <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b bg-background/90 px-4 backdrop-blur md:px-6">
           <div className="flex items-center gap-3">
-            <Sheet>
+            <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
               <SheetTrigger asChild>
                 <Button variant="outline" size="icon" className="lg:hidden" aria-label="Abrir navegación">
                   <Menu aria-hidden="true" />
                 </Button>
               </SheetTrigger>
               <SheetContent side="left" className="w-[290px] p-0">
-                <SheetHeader className="p-5 text-left"><SheetTitle><Brand /></SheetTitle></SheetHeader>
+                <SheetHeader className="p-5 text-left"><SheetTitle><Brand /></SheetTitle><SheetDescription className="sr-only">Navega entre las secciones de tu presupuesto familiar.</SheetDescription></SheetHeader>
                 <Separator />
-                <div className="p-3"><Navigation pathname={pathname} /></div>
+                <div className="p-3"><Navigation pathname={pathname} onNavigate={() => setMenuOpen(false)} /></div>
+                <div className="mt-auto border-t p-4">
+                  <p className="mb-3 truncate text-xs text-muted-foreground">{userEmail}</p>
+                  <Button variant="outline" className="w-full" onClick={signOut}><LogOut /> Cerrar sesión</Button>
+                </div>
               </SheetContent>
             </Sheet>
             <div>
@@ -110,9 +118,9 @@ export function DashboardShell({ children, userEmail }: { children: React.ReactN
               <p className="text-sm font-semibold">{activePage}</p>
             </div>
           </div>
-          <Avatar className="size-9 lg:hidden"><AvatarFallback>{userInitial}</AvatarFallback></Avatar>
+          <ThemeToggle />
         </header>
-        <main className="mx-auto w-full max-w-7xl p-4 md:p-6 lg:p-8">{children}</main>
+        <main id="contenido" tabIndex={-1} className="mx-auto w-full max-w-7xl p-4 outline-none md:p-6 lg:p-8">{children}</main>
       </div>
     </div>
   )
