@@ -7,7 +7,7 @@ export async function getFinanceContext(client: SupabaseClient): Promise<Finance
   if (authError || !authData.user) throw new Error('AUTH_REQUIRED')
 
   const { data: householdId, error: householdError } = await client.rpc('get_my_household_id')
-  if (householdError && householdError.code !== 'PGRST202') throw householdError
+  if (householdError) throw householdError
 
   return { userId: authData.user.id, householdId: (householdId as string | null) ?? null }
 }
@@ -48,6 +48,11 @@ export async function postTransaction(
 }
 
 const errorMessages: Record<string, string> = {
+  ACCOUNT_CHANGED: 'Otra persona modificó este nombre. Recarga la página antes de editarlo.',
+  INVALID_ACCOUNT_LABEL: 'Escribe un nombre de 1 a 80 caracteres y una sigla de hasta 4 caracteres.',
+  INVALID_AMOUNT: 'Ingresa un importe válido mayor que cero.',
+  INVALID_TRANSACTION_LINES: 'Revisa las cuentas y los importes del movimiento.',
+  ONLY_TWO_LINE_CORRECTIONS_SUPPORTED: 'Este movimiento tiene varias líneas y requiere una revisión contable antes de corregirse.',
   ACCOUNT_ARCHIVED: 'Una de las cuentas fue archivada. Selecciona una cuenta activa.',
   ACCOUNT_BALANCE_NOT_ZERO: 'La cuenta todavía tiene saldo. Traslada o ajusta el saldo antes de archivarla.',
   ACCOUNT_ACCESS_DENIED: 'No tienes permiso para modificar esta cuenta.',
@@ -63,7 +68,7 @@ const errorMessages: Record<string, string> = {
 }
 
 export function getFinanceErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error)
   const match = Object.keys(errorMessages).find((code) => message.includes(code))
   return match ? errorMessages[match] : 'No se pudo completar la operación. Intenta nuevamente.'
 }

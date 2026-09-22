@@ -6,6 +6,8 @@ Producción: [family-budget-beta.vercel.app](https://family-budget-beta.vercel.a
 
 ## Mejoras principales
 
+Actualización de septiembre: modo Claro/Oscuro/Sistema, edición segura de nombres, gestión por pestañas y correcciones de importes. Consulta la [guía de uso y verificación](docs/ACTUALIZACION_2026_09_22.md).
+
 - Los asientos se registran de forma atómica mediante funciones de PostgreSQL: o se guarda todo el movimiento o no se guarda nada.
 - Las correcciones ya no eliminan historia: anulan el asiento original con una reversión y crean uno corregido.
 - Las cuentas y obligaciones se archivan; no se borran registros contables.

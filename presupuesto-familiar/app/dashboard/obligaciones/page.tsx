@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Archive, CalendarClock, CheckCircle2, CreditCard, Plus } from 'lucide-react'
 import { toast } from 'sonner'
@@ -84,8 +84,12 @@ export default function ObligationsPage() {
     return () => { cancelled = true }
   }, [refreshKey, scope, currentPeriod])
 
+  const busy = useRef(false)
+  const [saving, setSaving] = useState(false)
+
   const createDebt = async () => {
-    if (!context || !debtName.trim()) return
+    if (!context || !debtName.trim() || busy.current) return
+    busy.current = true; setSaving(true)
     try {
       const { error } = await getBrowserClient().rpc('create_liability_account', {
         p_name: debtName.trim(), p_initial_amount: parseCurrencyInput(debtAmount),
@@ -95,13 +99,15 @@ export default function ObligationsPage() {
       setDebtName(''); setDebtAmount(''); setDebtDialog(false); setRefreshKey((key) => key + 1)
       toast.success('Deuda creada con un asiento inicial equilibrado.')
     } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+    finally { busy.current = false; setSaving(false) }
   }
 
   const createBill = async () => {
-    if (!context || !billDraft.title.trim() || !billDraft.categoryId) return
+    if (!context || !billDraft.title.trim() || !billDraft.categoryId || busy.current) return
     const amount = parseCurrencyInput(billDraft.amount)
-    const payDay = Number.parseInt(billDraft.payDay, 10)
-    if (amount <= 0 || payDay < 1 || payDay > 31) { toast.error('Ingresa un monto y un día entre 1 y 31.'); return }
+    const payDay = Number(billDraft.payDay)
+    if (amount <= 0 || !Number.isInteger(payDay) || payDay < 1 || payDay > 31) { toast.error('Ingresa un monto y un día entre 1 y 31.'); return }
+    busy.current = true; setSaving(true)
     try {
       const { error } = await getBrowserClient().from('recurring_bills').insert({
         title: billDraft.title.trim(), amount, pay_day: payDay,
@@ -113,9 +119,12 @@ export default function ObligationsPage() {
       setRefreshKey((key) => key + 1)
       toast.success('Pago recurrente creado.')
     } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+    finally { busy.current = false; setSaving(false) }
   }
 
   const archive = async (kind: 'account' | 'bill', id: string) => {
+    if (busy.current) return
+    busy.current = true; setSaving(true)
     try {
       const functionName = kind === 'account' ? 'archive_account' : 'archive_recurring_bill'
       const params = kind === 'account' ? { p_account_id: id } : { p_bill_id: id }
@@ -124,6 +133,7 @@ export default function ObligationsPage() {
       setRefreshKey((key) => key + 1)
       toast.success('Elemento archivado; el historial permanece intacto.')
     } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+    finally { busy.current = false; setSaving(false) }
   }
 
   const changeScope = (next: ScopeType) => { setLoading(true); setScope(next) }
@@ -139,13 +149,13 @@ export default function ObligationsPage() {
                 <DialogTrigger asChild><Button size="sm"><Plus /> Nueva deuda</Button></DialogTrigger>
                 <DialogContent><DialogHeader><DialogTitle>Nueva deuda</DialogTitle><DialogDescription>El saldo inicial se compensará contra patrimonio inicial para conservar la doble partida.</DialogDescription></DialogHeader>
                   <div className="space-y-4"><div className="space-y-2"><Label htmlFor="debt-name">Nombre</Label><Input id="debt-name" value={debtName} onChange={(event) => setDebtName(event.target.value)} placeholder="Ej. Crédito del vehículo" /></div><div className="space-y-2"><Label htmlFor="debt-amount">Saldo inicial</Label><Input id="debt-amount" inputMode="decimal" value={debtAmount} onChange={(event) => setDebtAmount(event.target.value)} placeholder="0" /></div></div>
-                  <DialogFooter><Button variant="outline" onClick={() => setDebtDialog(false)}>Cancelar</Button><Button onClick={createDebt}>Crear deuda</Button></DialogFooter>
+                  <DialogFooter><Button variant="outline" onClick={() => setDebtDialog(false)}>Cancelar</Button><Button disabled={saving} onClick={createDebt}>Crear deuda</Button></DialogFooter>
                 </DialogContent>
               </Dialog>
             </div>
             {debts.length === 0 ? <EmptyState icon={CreditCard} title="Sin deudas activas" description="Cuando registres una obligación aparecerá aquí." /> : (
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{debts.map((debt) => (
-                <Card key={debt.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{debt.name}</CardTitle><CardDescription>Saldo pendiente</CardDescription></div><ArchiveAction name={debt.name} onConfirm={() => archive('account', debt.id)} /></div></CardHeader><CardContent><p className="metric-value text-2xl font-bold text-red-600">{formatCurrency(Math.abs(Number(debt.current_balance)))}</p><Button asChild className="mt-4 w-full" variant="outline"><Link href={`/dashboard/transaccion?${new URLSearchParams({ desc: `Abono a ${debt.name}`, cat: debt.id, scope: debt.scope, type: 'GASTO' })}`}>Registrar abono</Link></Button></CardContent></Card>
+                <Card key={debt.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><CardTitle>{debt.name}</CardTitle><CardDescription>Saldo pendiente</CardDescription></div><ArchiveAction name={debt.name} onConfirm={() => archive('account', debt.id)} /></div></CardHeader><CardContent><p className="metric-value text-2xl font-bold text-red-600 dark:text-red-300">{formatCurrency(Math.abs(Number(debt.current_balance)))}</p><Button asChild className="mt-4 w-full" variant="outline"><Link href={`/dashboard/transaccion?${new URLSearchParams({ desc: `Abono a ${debt.name}`, cat: debt.id, scope: debt.scope, type: 'GASTO' })}`}>Registrar abono</Link></Button></CardContent></Card>
               ))}</div>
             )}
           </section>
@@ -156,13 +166,13 @@ export default function ObligationsPage() {
               <div className="space-y-2"><Label htmlFor="bill-amount">Monto</Label><Input id="bill-amount" inputMode="decimal" value={billDraft.amount} onChange={(event) => setBillDraft({ ...billDraft, amount: event.target.value })} /></div>
               <div className="space-y-2"><Label htmlFor="bill-day">Día</Label><Input id="bill-day" type="number" min={1} max={31} value={billDraft.payDay} onChange={(event) => setBillDraft({ ...billDraft, payDay: event.target.value })} /></div>
               <div className="space-y-2"><Label>Categoría</Label><Select value={billDraft.categoryId} onValueChange={(categoryId) => setBillDraft({ ...billDraft, categoryId })}><SelectTrigger aria-label="Categoría del pago recurrente"><SelectValue placeholder="Seleccionar" /></SelectTrigger><SelectContent>{categories.map((category) => <SelectItem key={category.id} value={category.id}>{category.name}</SelectItem>)}</SelectContent></Select></div>
-              <Button onClick={createBill}><Plus /> Agregar</Button>
+              <Button disabled={saving} onClick={createBill}><Plus /> Agregar</Button>
             </CardContent></Card>
 
             {bills.length === 0 ? <EmptyState icon={CalendarClock} title="Sin pagos recurrentes" description="Agrega servicios, arriendo u otras obligaciones periódicas." /> : (
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{bills.map((bill) => {
                 const paid = bill.payments?.some((payment) => !payment.voided_at && payment.period.slice(0, 10) === currentPeriod) ?? false
-                return <Card key={bill.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><div className="mb-2 flex items-center gap-2"><CardTitle>{bill.title}</CardTitle>{paid && <Badge className="bg-emerald-100 text-emerald-800"><CheckCircle2 /> Pagado</Badge>}</div><CardDescription>Vence el día {bill.pay_day} · {bill.category?.name}</CardDescription></div><ArchiveAction name={bill.title} onConfirm={() => archive('bill', bill.id)} /></div></CardHeader><CardContent><p className="metric-value text-xl font-bold">{formatCurrency(Number(bill.amount))}</p><Button asChild className="mt-4 w-full" disabled={paid}><Link aria-disabled={paid} href={paid ? '#' : `/dashboard/transaccion?${new URLSearchParams({ desc: bill.title, amount: String(bill.amount), cat: bill.category_id, scope: bill.scope, type: 'GASTO', bill: bill.id })}`}>{paid ? 'Pagado este mes' : 'Registrar pago'}</Link></Button></CardContent></Card>
+                return <Card key={bill.id}><CardHeader><div className="flex items-start justify-between gap-3"><div><div className="mb-2 flex items-center gap-2"><CardTitle>{bill.title}</CardTitle>{paid && <Badge className="bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300"><CheckCircle2 /> Pagado</Badge>}</div><CardDescription>Vence el día {bill.pay_day} · {bill.category?.name}</CardDescription></div><ArchiveAction name={bill.title} onConfirm={() => archive('bill', bill.id)} /></div></CardHeader><CardContent><p className="metric-value text-xl font-bold">{formatCurrency(Number(bill.amount))}</p><Button asChild className="mt-4 w-full" disabled={paid}><Link aria-disabled={paid} href={paid ? '#' : `/dashboard/transaccion?${new URLSearchParams({ desc: bill.title, amount: String(bill.amount), cat: bill.category_id, scope: bill.scope, type: 'GASTO', bill: bill.id })}`}>{paid ? 'Pagado este mes' : 'Registrar pago'}</Link></Button></CardContent></Card>
               })}</div>
             )}
           </section>

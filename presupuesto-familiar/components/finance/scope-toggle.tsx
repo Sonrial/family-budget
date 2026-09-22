@@ -7,7 +7,7 @@ export function ScopeToggle({ value, onChange }: {
   onChange: (value: ScopeType) => void
 }) {
   return (
-    <Tabs value={value} onValueChange={(next) => onChange(next as ScopeType)}>
+    <Tabs value={value} onValueChange={(next) => { if (next !== value) onChange(next as ScopeType) }}>
       <TabsList>
         <TabsTrigger value="PERSONAL"><Wallet aria-hidden="true" /> Personal</TabsTrigger>
         <TabsTrigger value="SHARED"><Users aria-hidden="true" /> Familiar</TabsTrigger>

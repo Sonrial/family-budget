@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Archive, Banknote, Landmark, Plus, ReceiptText } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Archive, Banknote, Landmark, Pencil, Plus, ReceiptText } from 'lucide-react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/finance/page-header'
 import { ScopeToggle } from '@/components/finance/scope-toggle'
@@ -19,9 +19,12 @@ import { getFinanceContext, getFinanceErrorMessage } from '@/lib/finance'
 import { getBrowserClient } from '@/lib/supabase/client'
 import type { Account, AccountType, FinanceContext, ScopeType } from '@/lib/types'
 
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+
 interface DraftAccount { name: string; icon: string }
 
-function AccountSection({ title, description, icon: Icon, accounts, draft, onDraftChange, onCreate, onArchive }: {
+function AccountSection({ title, description, icon: Icon, accounts, draft, onDraftChange, onCreate, onArchive, onEdit, saving }: {
   title: string
   description: string
   icon: typeof Landmark
@@ -30,6 +33,8 @@ function AccountSection({ title, description, icon: Icon, accounts, draft, onDra
   onDraftChange: (draft: DraftAccount) => void
   onCreate: () => void
   onArchive: (account: Account) => void
+  onEdit: (account: Account) => void
+  saving: boolean
 }) {
   return (
     <Card>
@@ -43,7 +48,7 @@ function AccountSection({ title, description, icon: Icon, accounts, draft, onDra
         <div className="grid gap-3 sm:grid-cols-[1fr_100px_auto] sm:items-end">
           <div className="space-y-2">
             <Label htmlFor={`${title}-name`}>Nombre</Label>
-            <Input id={`${title}-name`} value={draft.name} placeholder="Ej. Cuenta principal"
+            <Input id={`${title}-name`} value={draft.name} maxLength={80} placeholder="Ej. Cuenta principal"
               onChange={(event) => onDraftChange({ ...draft, name: event.target.value })} />
           </div>
           <div className="space-y-2">
@@ -51,7 +56,7 @@ function AccountSection({ title, description, icon: Icon, accounts, draft, onDra
             <Input id={`${title}-icon`} value={draft.icon} maxLength={4} placeholder="CTA"
               onChange={(event) => onDraftChange({ ...draft, icon: event.target.value.toUpperCase() })} />
           </div>
-          <Button onClick={onCreate} disabled={!draft.name.trim()}><Plus /> Agregar</Button>
+          <Button onClick={onCreate} disabled={saving || !draft.name.trim()}><Plus /> Agregar</Button>
         </div>
 
         <div className="divide-y rounded-xl border">
@@ -62,10 +67,11 @@ function AccountSection({ title, description, icon: Icon, accounts, draft, onDra
               <span className="flex size-9 items-center justify-center rounded-lg bg-muted font-mono text-[11px] font-bold text-muted-foreground">
                 {account.icon || account.name.slice(0, 3).toUpperCase()}
               </span>
-              <p className="min-w-0 flex-1 truncate text-sm font-medium">{account.name}</p>
+              <p className="min-w-0 flex-1 break-words text-sm font-medium">{account.name}</p>
+              <Button variant="outline" size="icon" disabled={saving} aria-label={`Editar ${account.name}`} title="Editar nombre y sigla" onClick={() => onEdit(account)}><Pencil /></Button>
               <AlertDialog>
                 <AlertDialogTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={`Archivar ${account.name}`}><Archive /></Button>
+                  <Button variant="ghost" size="icon-sm" disabled={saving} aria-label={`Archivar ${account.name}`}><Archive /></Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
                   <AlertDialogHeader>
@@ -96,6 +102,12 @@ export default function AccountsPage() {
   const [expenseDraft, setExpenseDraft] = useState(emptyDraft)
   const [incomeDraft, setIncomeDraft] = useState(emptyDraft)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [activeType, setActiveType] = useState('ASSET')
+  const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState<Account | null>(null)
+  const [editDraft, setEditDraft] = useState(emptyDraft)
+  const [saving, setSaving] = useState(false)
+  const busy = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -123,7 +135,7 @@ export default function AccountsPage() {
           setLoading(false)
         }
       } catch (error) {
-        if (!cancelled) { toast.error(getFinanceErrorMessage(error)); setLoading(false) }
+        if (!cancelled) { setAccounts([]); setContext(null); toast.error(getFinanceErrorMessage(error)); setLoading(false) }
       }
     }
     void loadAccounts()
@@ -131,7 +143,8 @@ export default function AccountsPage() {
   }, [scope, refreshKey])
 
   const createAccount = async (draft: DraftAccount, type: AccountType, clear: () => void) => {
-    if (!context || !draft.name.trim()) return
+    if (!context || !draft.name.trim() || busy.current) return
+    busy.current = true; setSaving(true)
     try {
       const { error } = await getBrowserClient().from('accounts').insert({
         name: draft.name.trim(),
@@ -146,36 +159,78 @@ export default function AccountsPage() {
       setRefreshKey((key) => key + 1)
       toast.success('Cuenta creada correctamente.')
     } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+    finally { busy.current = false; setSaving(false) }
   }
 
   const archiveAccount = async (account: Account) => {
+    if (busy.current) return
+    busy.current = true; setSaving(true)
     try {
       const { error } = await getBrowserClient().rpc('archive_account', { p_account_id: account.id })
       if (error) throw error
       setRefreshKey((key) => key + 1)
       toast.success('Cuenta archivada; el historial se conservó.')
     } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+    finally { busy.current = false; setSaving(false) }
+  }
+
+  const openEditor = (account: Account) => { setEditing(account); setEditDraft({ name: account.name, icon: account.icon ?? '' }) }
+  const renameAccount = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!editing || !editDraft.name.trim() || busy.current) return
+    busy.current = true; setSaving(true)
+    try {
+      const { error } = await getBrowserClient().rpc('rename_account', {
+        p_account_id: editing.id, p_name: editDraft.name.trim(), p_icon: editDraft.icon.trim(),
+        p_expected_name: editing.name, p_expected_icon: editing.icon,
+      })
+      if (error) throw error
+      setEditing(null); setRefreshKey((key) => key + 1)
+      toast.success('Nombre actualizado. Tus movimientos y saldos se conservaron.')
+    } catch (error) { toast.error(getFinanceErrorMessage(error)) }
+    finally { busy.current = false; setSaving(false) }
   }
 
   const changeScope = (next: ScopeType) => { setLoading(true); setScope(next) }
-  const filtered = (type: AccountType) => accounts.filter((account) => account.type === type)
+  const filtered = (type: AccountType) => accounts.filter((account) => account.type === type && account.name.toLocaleLowerCase('es').includes(search.trim().toLocaleLowerCase('es')))
 
   return (
     <div className="space-y-6">
       <PageHeader title="Cuentas y categorías" description="Organiza dónde guardas dinero y cómo clasificas ingresos y gastos." actions={<ScopeToggle value={scope} onChange={changeScope} />} />
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm">
+        <strong>Tu historial se conserva.</strong> Cambiar nombres y siglas no altera saldos ni movimientos. El nuevo nombre aparecerá también en el historial.{scope === 'SHARED' && ' Los cambios son visibles para todo el hogar.'}
+      </div>
+      <Tabs value={activeType} onValueChange={setActiveType}>
+        <TabsList className="grid h-auto w-full grid-cols-3 p-1 md:w-fit">
+          <TabsTrigger value="ASSET" className="py-3">Cuentas ({accounts.filter((a) => a.type === 'ASSET').length})</TabsTrigger>
+          <TabsTrigger value="EXPENSE" className="py-3">Gastos ({accounts.filter((a) => a.type === 'EXPENSE').length})</TabsTrigger>
+          <TabsTrigger value="INCOME" className="py-3">Ingresos ({accounts.filter((a) => a.type === 'INCOME').length})</TabsTrigger>
+        </TabsList>
+      <Input aria-label="Buscar cuentas o categorías" placeholder="Buscar por nombre…" value={search} onChange={(event) => setSearch(event.target.value)} />
       {loading ? <LoadingState /> : (
-        <div className="grid gap-5 xl:grid-cols-2">
-          <AccountSection title="Cuentas y efectivo" description="Bancos, billeteras y efectivo disponible." icon={Landmark}
+        <div className="space-y-5">
+          <TabsContent value="ASSET"><AccountSection title="Cuentas y efectivo" description="Bancos, billeteras y efectivo disponible." icon={Landmark}
             accounts={filtered('ASSET')} draft={assetDraft} onDraftChange={setAssetDraft}
-            onCreate={() => createAccount(assetDraft, 'ASSET', () => setAssetDraft(emptyDraft()))} onArchive={archiveAccount} />
-          <AccountSection title="Categorías de gasto" description="Clasificaciones para analizar el consumo." icon={ReceiptText}
+            onCreate={() => createAccount(assetDraft, 'ASSET', () => setAssetDraft(emptyDraft()))} onArchive={archiveAccount} onEdit={openEditor} saving={saving || !context || (scope === 'SHARED' && !context.householdId)} /></TabsContent>
+          <TabsContent value="EXPENSE"><AccountSection title="Categorías de gasto" description="Clasificaciones para analizar el consumo." icon={ReceiptText}
             accounts={filtered('EXPENSE')} draft={expenseDraft} onDraftChange={setExpenseDraft}
-            onCreate={() => createAccount(expenseDraft, 'EXPENSE', () => setExpenseDraft(emptyDraft()))} onArchive={archiveAccount} />
-          <AccountSection title="Fuentes de ingreso" description="Salarios, ventas y otras entradas." icon={Banknote}
+            onCreate={() => createAccount(expenseDraft, 'EXPENSE', () => setExpenseDraft(emptyDraft()))} onArchive={archiveAccount} onEdit={openEditor} saving={saving || !context || (scope === 'SHARED' && !context.householdId)} /></TabsContent>
+          <TabsContent value="INCOME"><AccountSection title="Fuentes de ingreso" description="Salarios, ventas y otras entradas." icon={Banknote}
             accounts={filtered('INCOME')} draft={incomeDraft} onDraftChange={setIncomeDraft}
-            onCreate={() => createAccount(incomeDraft, 'INCOME', () => setIncomeDraft(emptyDraft()))} onArchive={archiveAccount} />
+            onCreate={() => createAccount(incomeDraft, 'INCOME', () => setIncomeDraft(emptyDraft()))} onArchive={archiveAccount} onEdit={openEditor} saving={saving || !context || (scope === 'SHARED' && !context.householdId)} /></TabsContent>
         </div>
       )}
+      </Tabs>
+      <Dialog open={editing !== null} onOpenChange={(open) => { if (!open && !saving) setEditing(null) }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Editar nombre y sigla</DialogTitle><DialogDescription>Se conserva el mismo identificador. No se borran movimientos, saldos ni pagos asociados.</DialogDescription></DialogHeader>
+          <form onSubmit={renameAccount} className="space-y-5">
+            <div className="space-y-2"><Label htmlFor="edit-name">Nombre</Label><Input id="edit-name" autoFocus value={editDraft.name} maxLength={80} required disabled={saving} onChange={(event) => setEditDraft({ ...editDraft, name: event.target.value })} /></div>
+            <div className="space-y-2"><Label htmlFor="edit-icon">Sigla o emoji</Label><Input id="edit-icon" value={editDraft.icon} maxLength={4} disabled={saving} onChange={(event) => setEditDraft({ ...editDraft, icon: event.target.value })} /><p className="text-xs text-muted-foreground">Opcional. Hasta 4 caracteres.</p></div>
+            <DialogFooter><Button type="button" variant="outline" disabled={saving} onClick={() => setEditing(null)}>Cancelar</Button><Button type="submit" disabled={saving || !editDraft.name.trim()}>{saving ? 'Guardando…' : 'Guardar cambios'}</Button></DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

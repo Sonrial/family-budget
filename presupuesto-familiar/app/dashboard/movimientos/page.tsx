@@ -65,7 +65,7 @@ export default function MovementsPage() {
         let query = client.from('transactions')
           .select('*, created_by_profile:profiles(email), lines:transaction_lines(*, account:accounts(id,name,icon,type))')
           .eq('scope', scope).eq('is_reversal', false)
-          .order('date', { ascending: false })
+          .order('date', { ascending: false }).order('created_at', { ascending: false }).order('id', { ascending: false })
           .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
 
         query = scope === 'PERSONAL'

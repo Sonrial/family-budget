@@ -16,7 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { getFinanceContext, getFinanceErrorMessage, postTransaction } from '@/lib/finance'
 import {
-  formatCurrencyInput, getLocalDateInputValue,
+  formatCurrencyInput, currencyNumberToInput, getLocalDateInputValue,
   getLocalMonthInputValue, parseCurrencyInput,
 } from '@/lib/formatters'
 import { getBrowserClient } from '@/lib/supabase/client'
@@ -33,12 +33,13 @@ const transactionTypes = [
 function TransactionForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const initialType = (searchParams.get('type') as TransactionType | null) ?? 'GASTO'
-  const initialScope = (searchParams.get('scope') as ScopeType | null) ?? 'PERSONAL'
+  const requestedType = searchParams.get('type')
+  const initialType: TransactionType = requestedType === 'INGRESO' || requestedType === 'APORTE' ? requestedType : 'GASTO'
+  const initialScope: ScopeType = searchParams.get('scope') === 'SHARED' ? 'SHARED' : 'PERSONAL'
   const [context, setContext] = useState<FinanceContext | null>(null)
   const [description, setDescription] = useState(searchParams.get('desc') ?? '')
   const [notes, setNotes] = useState('')
-  const [amount, setAmount] = useState(searchParams.get('amount') ?? '')
+  const [amount, setAmount] = useState(() => currencyNumberToInput(Number(searchParams.get('amount') ?? 0)))
   const [type, setType] = useState<TransactionType>(initialType)
   const [scope, setScope] = useState<ScopeType>(initialScope)
   const [date, setDate] = useState(getLocalDateInputValue)
@@ -65,7 +66,7 @@ function TransactionForm() {
           setFamilyMembers((data as Profile[] | null) ?? [])
         }
       } catch (error) {
-        if (!cancelled) toast.error(getFinanceErrorMessage(error))
+        if (!cancelled) { toast.error(getFinanceErrorMessage(error)); setLoadingAccounts(false) }
       }
     }
     void loadContext()
@@ -132,12 +133,14 @@ function TransactionForm() {
   }, [context, scope, targetUserId, transferMode, type])
 
   const changeType = (nextType: TransactionType) => {
+    if (nextType === type) return
     setType(nextType)
     setSelectedAsset('')
     setSelectedDestination('')
     setLoadingAccounts(true)
   }
   const changeScope = (nextScope: ScopeType) => {
+    if (nextScope === scope) return
     setScope(nextScope)
     setSelectedAsset('')
     setSelectedDestination('')
@@ -212,8 +215,8 @@ function TransactionForm() {
         ) : (
           <Card>
             <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
-              <Button type="button" variant={transferMode === 'POOL' ? 'default' : 'outline'} onClick={() => { setTransferMode('POOL'); setSelectedDestination(''); setLoadingAccounts(true) }}>Al fondo familiar</Button>
-              <Button type="button" variant={transferMode === 'MEMBER' ? 'default' : 'outline'} onClick={() => { setTransferMode('MEMBER'); setSelectedDestination(''); setLoadingAccounts(true) }}>A otro integrante</Button>
+              <Button type="button" variant={transferMode === 'POOL' ? 'default' : 'outline'} onClick={() => { if (transferMode === 'POOL') return; setTransferMode('POOL'); setSelectedDestination(''); setLoadingAccounts(true) }}>Al fondo familiar</Button>
+              <Button type="button" variant={transferMode === 'MEMBER' ? 'default' : 'outline'} onClick={() => { if (transferMode === 'MEMBER') return; setTransferMode('MEMBER'); setSelectedDestination(''); setLoadingAccounts(true) }}>A otro integrante</Button>
               {transferMode === 'MEMBER' && (
                 <div className="space-y-2 sm:col-span-2">
                   <Label>Integrante destinatario</Label>
